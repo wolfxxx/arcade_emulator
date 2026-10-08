@@ -100,10 +100,16 @@ sealed unsafe class InputManager : IInputSource, IDisposable
         Message?.Invoke($"Controller {index + 1} disconnected");
     }
 
-    /// <summary>True while any gamepad holds Back + Start together (the pad "exit" chord).</summary>
-    public bool ExitChordHeld => _pads.Any(p =>
+    /// <summary>Open gamepad handles (SDL_Gamepad*), for reading menu input from the same pads.</summary>
+    public IEnumerable<nint> Pads => _pads.Select(p => p.Pad);
+
+    /// <summary>True while any gamepad holds Back + Start together (the pad "menu" chord).</summary>
+    public bool MenuChordHeld => _pads.Any(p =>
         SDL_GetGamepadButton((SDL_Gamepad*)p.Pad, SDL_GamepadButton.SDL_GAMEPAD_BUTTON_BACK) &&
         SDL_GetGamepadButton((SDL_Gamepad*)p.Pad, SDL_GamepadButton.SDL_GAMEPAD_BUTTON_START));
+
+    /// <summary>True while any gamepad holds its Guide (Xbox / PS) button.</summary>
+    public bool GuideHeld => _pads.Any(p => SDL_GetGamepadButton((SDL_Gamepad*)p.Pad, SDL_GamepadButton.SDL_GAMEPAD_BUTTON_GUIDE));
 
     public void Poll()
     {

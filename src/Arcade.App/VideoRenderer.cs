@@ -78,14 +78,13 @@ sealed unsafe class VideoRenderer : IDisposable
         _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
     }
 
+    /// <summary>Draws the frame as large as fits inside <paramref name="area"/> (window pixels, top-left origin) at the game's aspect ratio.</summary>
     /// <param name="aspect">Display aspect ratio of the final (rotated) image; 0 means use square pixels.</param>
-    public void Render(VideoFrame frame, uint rotation, float aspect, int windowWidth, int windowHeight)
+    /// <returns>The rectangle the game image occupies.</returns>
+    public Ui.RectF Render(VideoFrame frame, uint rotation, float aspect, Ui.RectF area, int windowHeight, float alpha = 1)
     {
-        _gl.Viewport(0, 0, (uint)windowWidth, (uint)windowHeight);
-        _gl.ClearColor(0, 0, 0, 1);
-        _gl.Clear(ClearBufferMask.ColorBufferBit);
-        if (frame.Width == 0 || windowWidth == 0 || windowHeight == 0)
-            return;
+        if (frame.Width == 0 || area.W < 1 || area.H < 1)
+            return area;
 
         Upload(frame);
 
@@ -93,15 +92,17 @@ sealed unsafe class VideoRenderer : IDisposable
         if (aspect <= 0)
             aspect = rotated ? (float)frame.Height / frame.Width : (float)frame.Width / frame.Height;
 
-        // Largest rectangle with the game's aspect ratio, centred in the window.
-        int w = windowWidth, h = (int)Math.Round(windowWidth / aspect);
-        if (h > windowHeight)
+        // Largest whole-pixel rectangle with the game's aspect ratio, centred in the area.
+        var fit = area.Fit(aspect);
+        int w = (int)Math.Round(fit.W), h = (int)Math.Round(fit.H);
+        int x = (int)Math.Round(fit.X), y = (int)Math.Round(fit.Y);
+        _gl.Viewport(x, windowHeight - y - h, (uint)w, (uint)h); // GL's origin is bottom-left
+        if (alpha < 1)
         {
-            h = windowHeight;
-            w = (int)Math.Round(windowHeight * aspect);
+            _gl.Enable(EnableCap.Blend);
+            _gl.BlendColor(0, 0, 0, alpha);
+            _gl.BlendFunc(BlendingFactor.ConstantAlpha, BlendingFactor.OneMinusConstantAlpha);
         }
-        _gl.Viewport((windowWidth - w) / 2, (windowHeight - h) / 2, (uint)w, (uint)h);
-
         // The integer prescale is computed in source orientation, so swap axes for rotated games.
         var (outW, outH) = rotated ? (h, w) : (w, h);
         _gl.UseProgram(_program);
@@ -111,6 +112,8 @@ sealed unsafe class VideoRenderer : IDisposable
         _gl.BindVertexArray(_vao);
         _gl.BindTexture(TextureTarget.Texture2D, _texture);
         _gl.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
+        _gl.Disable(EnableCap.Blend);
+        return new Ui.RectF(x, y, w, h);
     }
 
     void Upload(VideoFrame frame)

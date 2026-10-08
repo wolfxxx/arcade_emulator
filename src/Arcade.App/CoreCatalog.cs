@@ -21,15 +21,17 @@ sealed class CoreCatalog(AppPaths paths)
         new("mame2003_plus", "MAME 2003-Plus", "mame2003_plus_libretro.dll", "mame2003_plus.dat", Path.Combine("mame2003-plus", "samples")),
     ];
 
-    List<LibraryCore>? _libraryCores;
 
     public static CoreDefinition? Find(string id) => Known.FirstOrDefault(c => c.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Installed cores that have a DAT, in preference order: the ones the library can verify games for.</summary>
-    public IReadOnlyList<LibraryCore> LibraryCores => _libraryCores ??= Known
-        .Where(c => File.Exists(DllPath(c)) && File.Exists(Path.Combine(paths.Dats, c.DatName)))
+    // Loaded once, possibly from a background thread (the app preloads it while the UI starts).
+    readonly Lazy<IReadOnlyList<LibraryCore>> _libraryCores = new(() => Known
+        .Where(c => File.Exists(Path.Combine(paths.Cores, c.DllName)) && File.Exists(Path.Combine(paths.Dats, c.DatName)))
         .Select(c => new LibraryCore(c.Id, c.DisplayName, DatFile.Load(Path.Combine(paths.Dats, c.DatName)), Path.Combine(paths.System, c.SamplesFolder)))
-        .ToList();
+        .ToList());
+
+    public IReadOnlyList<LibraryCore> LibraryCores => _libraryCores.Value;
 
     public SetAssessment Assess(string romPath, string? preferredCoreId = null) =>
         SetClassifier.Assess(romPath, LibraryCores, [paths.System], preferredCoreId: preferredCoreId);

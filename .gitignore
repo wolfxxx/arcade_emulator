@@ -14,3 +14,5 @@ out/
 dats/
 library.db*
 artwork/
+settings.json
+screenshots/

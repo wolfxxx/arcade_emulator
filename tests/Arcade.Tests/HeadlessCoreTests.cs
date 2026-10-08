@@ -95,6 +95,23 @@ public class HeadlessCoreTests
         Assert.Equal(first, second);
     }
 
+    [RequiresCoreFact("mame2003_plus", "supertnk")]
+    public void Switching_cores_and_games_repeatedly_gives_the_same_frames()
+    {
+        // The game browser runs one game after another in a single process, so each core must
+        // come back clean after being unloaded, even with the other core loaded in between.
+        (string Core, string Rom)[] sequence =
+            [("mame2003_plus", "robby"), ("fbneo", "gridlee"), ("mame2003_plus", "supertnk"), ("mame2003_plus", "robby"), ("fbneo", "gridlee"), ("mame2003_plus", "supertnk")];
+        var hashes = new List<ulong>();
+        foreach (var (core, rom) in sequence)
+        {
+            using var host = LoadCore(core, rom);
+            Run(host, 200);
+            hashes.Add(host.LastFrame.ComputeHash());
+        }
+        Assert.Equal(hashes[..3], hashes[3..]);
+    }
+
     [RequiresCoreFact("mame2003_plus", "robby")]
     public void Loading_a_second_core_while_one_is_active_is_rejected()
     {
