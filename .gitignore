@@ -12,3 +12,5 @@ system/
 saves/
 out/
 dats/
+library.db*
+artwork/

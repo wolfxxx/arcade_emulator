@@ -10,12 +10,16 @@ sealed record AppPaths(string Root)
     public string Dats => Path.Combine(Root, "dats");
     public string System => Path.Combine(Root, "system");
     public string Saves => Path.Combine(Root, "saves");
+    public string Roms => Path.Combine(Root, "roms");
+    public string Artwork => Path.Combine(Root, "artwork");
+    public string LibraryDb => Path.Combine(Root, "library.db");
 
     public static AppPaths Discover()
     {
-        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
-            if (Directory.Exists(Path.Combine(dir.FullName, "cores")))
-                return new AppPaths(dir.FullName);
+        foreach (var start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
+            for (var dir = new DirectoryInfo(start); dir != null; dir = dir.Parent)
+                if (Directory.Exists(Path.Combine(dir.FullName, "cores")))
+                    return new AppPaths(dir.FullName);
         return new AppPaths(AppContext.BaseDirectory);
     }
 }
