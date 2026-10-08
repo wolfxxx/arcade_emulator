@@ -32,7 +32,7 @@ public unsafe class CFormatTests
     public void Treats_plain_int_as_32_bit_and_ll_as_64_bit()
     {
         Assert.Equal("-1", Format("%d", unchecked((nint)0x7FFFFFFF_FFFFFFFF)));
-        Assert.Equal("4294967296", Format("%llu", (nint)0x1_0000_0000));
+        Assert.Equal("4294967296", Format("%llu", unchecked((nint)0x1_0000_0000)));
     }
 
     [Fact]
