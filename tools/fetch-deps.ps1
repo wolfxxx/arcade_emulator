@@ -9,8 +9,13 @@ $root = Split-Path -Parent $PSScriptRoot
 
 $cores = @('fbneo_libretro', 'mame2003_plus_libretro')
 $roms = @('gridlee', 'robby', 'alienar', 'supertnk')
+# Each core's list of supported ROM sets, used to pick the right core for a game.
+$dats = @{
+    'fbneo.dat'         = 'https://raw.githubusercontent.com/libretro/FBNeo/master/dats/FinalBurn%20Neo%20(ClrMame%20Pro%20XML%2C%20Arcade%20only).dat'
+    'mame2003_plus.dat' = 'https://raw.githubusercontent.com/libretro/mame2003-plus-libretro/master/metadata/mame2003-plus.xml'
+}
 
-foreach ($dir in 'downloads', 'cores', 'roms', 'system', 'saves') {
+foreach ($dir in 'downloads', 'cores', 'dats', 'roms', 'system', 'saves') {
     New-Item -ItemType Directory -Force (Join-Path $root $dir) | Out-Null
 }
 
@@ -28,4 +33,11 @@ foreach ($rom in $roms) {
     if ((Test-Path $out) -and -not $Force) { Write-Host "have  $rom"; continue }
     Write-Host "fetch $rom"
     Invoke-WebRequest "https://www.mamedev.org/roms/$rom/$rom.zip" -OutFile $out
+}
+
+foreach ($dat in $dats.Keys) {
+    $out = Join-Path $root "dats\$dat"
+    if ((Test-Path $out) -and -not $Force) { Write-Host "have  $dat"; continue }
+    Write-Host "fetch $dat"
+    Invoke-WebRequest $dats[$dat] -OutFile $out
 }

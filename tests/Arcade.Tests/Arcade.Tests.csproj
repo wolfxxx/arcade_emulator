@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Arcade.Libretro\Arcade.Libretro.csproj" />
+    <ProjectReference Include="..\..\src\Arcade.Library\Arcade.Library.csproj" />
   </ItemGroup>
 
 </Project>
