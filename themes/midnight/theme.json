@@ -1,0 +1,27 @@
+{
+  // Dark neon look. Colours are #rrggbb or #rrggbbaa; fonts can be files in this folder,
+  // paths relative to the app folder, or Windows font names such as "segoeui.ttf".
+  "name": "Midnight",
+  "titleFont": "assets/fonts/PressStart2P-Regular.ttf",
+  "titleFontScale": 0.8,
+  "bodyFont": "segoeui.ttf",
+  "uppercaseHeadings": true,
+  "cornerRadius": 14,
+  "listSide": "left",
+  "scanlines": false,
+  "colors": {
+    "background": "#090c16",
+    "background2": "#1c1035",
+    "panel": "#ffffff0b",
+    "panelBorder": "#ffffff1c",
+    "text": "#eef1f8",
+    "textDim": "#8d96ad",
+    "accent": "#ff3d7f",
+    "accent2": "#2fd5ff",
+    "selection": "#ff3d7fd9",
+    "selectionText": "#ffffff",
+    "warning": "#ffb547",
+    "error": "#ff6a6a",
+    "overlay": "#05060cc8"
+  }
+}

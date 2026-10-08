@@ -24,6 +24,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Arcade.Libretro\Arcade.Libretro.csproj" />
     <ProjectReference Include="..\..\src\Arcade.Library\Arcade.Library.csproj" />
+    <ProjectReference Include="..\..\src\Arcade.App\Arcade.App.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,27 @@
+{
+  // A warm, old-school cabinet look: pixel fonts, scanlines, list on the right.
+  "name": "Cabinet",
+  "titleFont": "assets/fonts/PressStart2P-Regular.ttf",
+  "titleFontScale": 0.75,
+  "bodyFont": "assets/fonts/VT323-Regular.ttf",
+  "bodyFontScale": 1.35,
+  "uppercaseHeadings": true,
+  "cornerRadius": 4,
+  "listSide": "right",
+  "scanlines": true,
+  "colors": {
+    "background": "#120a04",
+    "background2": "#3a1d06",
+    "panel": "#00000059",
+    "panelBorder": "#ffb02e40",
+    "text": "#ffe9c4",
+    "textDim": "#b8936a",
+    "accent": "#ffb02e",
+    "accent2": "#ff5b2e",
+    "selection": "#ffb02e",
+    "selectionText": "#1a0d02",
+    "warning": "#ffd84d",
+    "error": "#ff6a4d",
+    "overlay": "#0a0502d0"
+  }
+}

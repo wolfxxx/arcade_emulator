@@ -41,9 +41,12 @@ sealed unsafe class AudioOutput : IAudioSink, IDisposable
         _started = false;
     }
 
+    /// <summary>Drops the core's audio instead of playing it (attract mode).</summary>
+    public bool Muted { get; set; }
+
     public void Write(ReadOnlySpan<short> interleavedStereo)
     {
-        if (_stream == null || interleavedStereo.IsEmpty)
+        if (_stream == null || interleavedStereo.IsEmpty || Muted)
             return;
         fixed (short* p = interleavedStereo)
             SDL_PutAudioStreamData(_stream, (nint)p, interleavedStereo.Length * sizeof(short));
@@ -84,6 +87,24 @@ sealed unsafe class AudioOutput : IAudioSink, IDisposable
     {
         if (_stream != null)
             SDL_ClearAudioStream(_stream);
+    }
+
+    /// <summary>Stops playback and drops queued audio, e.g. while a menu is open; it restarts by itself once enough new audio is queued.</summary>
+    public void Pause()
+    {
+        if (_stream == null)
+            return;
+        SDL_PauseAudioStreamDevice(_stream);
+        SDL_ClearAudioStream(_stream);
+        _started = false;
+    }
+
+    /// <summary>Closes the device when a game ends; the next <see cref="Configure"/> reopens it.</summary>
+    public void Stop()
+    {
+        Close();
+        _sampleRate = 0;
+        Muted = false;
     }
 
     void Close()

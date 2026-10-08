@@ -4,9 +4,9 @@ A custom arcade frontend for Windows, written in C# / .NET 8, that runs arcade R
 [libretro](https://www.libretro.com/) cores (FinalBurn Neo, MAME 2003-Plus). The cores emulate the
 hardware. This project owns everything the player sees and touches.
 
-**Status: Phase 2 (ROM library) built.** Games run in a window with sound, keyboard and gamepad
-input, and save states. A SQLite library checks every ROM zip against each core's DAT and explains
-why a set won't run. Next is Phase 3: the on-screen game browser.
+**Status: Phase 3 (game browser) built.** Start the app and you get a game list that works with a
+joystick alone: categories, search, favourites, previews, a pause menu in game, themes, and an attract
+mode that plays game demos when idle. Next is Phase 4: controls and cabinet setup.
 
 ## Setup
 
@@ -18,23 +18,43 @@ dotnet test                # unit tests + headless core tests
 ## Play
 
 ```powershell
-dotnet run --project src/Arcade.App -- roms/robby.zip
-# options: --core fbneo|mame2003_plus|<path.dll>   --fullscreen   --verbose
+dotnet run --project src/Arcade.App                 # the game list (scans roms/ on first start)
+dotnet run --project src/Arcade.App -- robby        # or play one game directly
+# options: --core fbneo|mame2003_plus|<path.dll>   --fullscreen   --windowed   --verbose
 ```
 
-| Keyboard | |
+| Game list | Keyboard | Gamepad |
+|---|---|---|
+| Move · jump letter | Arrows (← → jump letter) · PgUp/PgDn | D-pad or stick · LT/RT page |
+| Play | Enter, Z or 1 | Ⓐ or Start |
+| Favourite · options | F · Tab | Ⓧ · Ⓨ |
+| Category | Q / W | LB / RB |
+| Search | / | – |
+| Back / quit | Esc | Ⓑ |
+
+| In game | Keyboard |
 |---|---|
-| Arrows | Move |
-| Z X A S Q W (or Ctrl Alt Space Shift) | Buttons 1–6 |
-| 5 / 1 | Insert coin / Start (player 1) |
-| 6 / 2 | Insert coin / Start (player 2) |
-| F2 / F4 | Save / load state |
-| F3 · P · F12 | Reset · pause · screenshot |
-| F11 or Alt+Enter · Esc | Fullscreen · quit |
+| Move | Arrows |
+| Buttons 1–6 | Z X A S Q W (or Ctrl Alt Space Shift) |
+| Insert coin / Start | 5 / 1 (player 2: 6 / 2) |
+| Pause menu | Esc or P (gamepad: Guide, or hold Back+Start) |
+| Save · load · reset | F2 · F4 · F3 |
+| Screenshot · fullscreen | F12 · F11 or Alt+Enter |
 
 Gamepads (Xbox, PlayStation, Switch and others via SDL) work out of the box and can be plugged in at any
-time. The first pad is player 1, Back is coin, Start is start, and holding Back+Start quits.
+time. The first pad is player 1, Back is coin and Start is start. The mouse also works in the list
+(click, double-click to play, wheel to scroll).
 
+The pause menu has save/load state, reset, fullscreen, "use this screen as preview", and the game's
+controls. Games without artwork get a preview picture taken automatically the first time you play
+for more than 15 seconds.
+
+**Attract mode:** after a few idle minutes in the list (set in Options), random games run their own
+demos, muted. Press Enter / Ⓐ to play the game on screen, or any other button to return.
+
+**Themes:** `themes/<name>/theme.json` sets colours, fonts (TTF files or Windows font names), corner
+radius, scanlines, a background image, and which side the list is on. Midnight (dark neon) and
+Cabinet (warm, pixel fonts, scanlines) are included. Copy one to make your own; it appears in Options.
 **Core selection:** each ROM zip is checked by CRC32 against each core's DAT (its list of supported
 sets and files). The first core that has every file wins, with FBNeo preferred. If no core matches, the
 app lists what's missing instead of showing a black screen.
@@ -75,12 +95,13 @@ Clones inside a merged parent zip aren't listed, because cores load games by fil
 
 | Path | Purpose |
 |------|---------|
-| `src/Arcade.App` | The player: SDL3 window, OpenGL renderer (rotation, aspect, sharp-bilinear), audio with rate control, input, main loop |
+| `src/Arcade.App` | The app: SDL3 window and main loop (`ArcadeApp`), scenes (`Browser/`, `GameScene`), `GameSession` (a running core), UI toolkit in `Ui/` (batched GL renderer, FontStashSharp text, themes, menus, input), video/audio/input |
 | `src/Arcade.Library` | DAT parsing, CRC verification (incl. parent/BIOS sets), `SetClassifier` (status + core choice), SQLite `GameLibrary`, `LibraryScanner`, artwork lookup |
 | `src/Arcade.Libretro` | libretro host: `CoreHost` (load/run/serialize, environment callbacks), `VideoFrame`, `PngEncoder`, `ScriptedInput` |
 | `src/Arcade.Spike` | Headless runner from Phase 0: runs N frames, dumps a PNG, checks save-state determinism |
 | `tests/Arcade.Tests` | xUnit tests; core tests are skipped when cores/ROMs haven't been fetched |
-| `cores/ dats/ roms/ system/ saves/ artwork/ library.db` | Not committed. `system/` is for BIOS files (e.g. `neogeo.zip`) |
+| `themes/` · `assets/fonts/` | Bundled themes; Press Start 2P and VT323 fonts (SIL Open Font License, see the OFL files) |
+| `cores/ dats/ roms/ system/ saves/ artwork/ library.db settings.json` | Not committed. `system/` is for BIOS files (e.g. `neogeo.zip`) |
 
 ## ROMs and licensing
 
@@ -88,3 +109,7 @@ No commercial ROMs are included or downloaded. Each ROM set must match the versi
 For example, FBNeo shows "Romset is unknown" for sets it doesn't recognise, even though loading reports
 success, which is why the DAT check exists. The test ROMs are ones their rights holders released for
 free non-commercial use. FBNeo and MAME 2003-Plus are licensed for non-commercial use only.
+
+For automated UI checks the app can run hidden and scripted, e.g.
+`Arcade.App --offscreen 1600x900 --script "wait 2; down; shot list.png; accept; wait 3; key escape; shot pause.png; quit"`.
+Such runs don't change settings, play counts or previews.
