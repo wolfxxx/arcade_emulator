@@ -43,6 +43,8 @@ sealed unsafe class ArcadeApp(AppOptions options)
         var choice = new CoreCatalog(_paths).Choose(options.RomPath, options.Core);
         if (choice.Check is { Status: not RomSetStatus.Complete } check)
             Console.WriteLine($"Warning: {check.Describe()} — trying anyway.");
+        foreach (var warning in choice.Warnings)
+            ShowMessage($"Note: {warning}.");
 
         using var input = new InputManager();
         using var audio = new AudioOutput();
