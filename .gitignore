@@ -1,0 +1,13 @@
+bin/
+obj/
+.vs/
+*.user
+TestResults/
+
+# Third-party binaries and user content: fetched by tools/fetch-deps.ps1, never committed.
+downloads/
+cores/
+roms/
+system/
+saves/
+out/
