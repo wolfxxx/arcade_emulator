@@ -4,14 +4,15 @@ A custom arcade frontend for Windows, written in C# / .NET 8, that runs arcade R
 [libretro](https://www.libretro.com/) cores (FinalBurn Neo, MAME 2003-Plus). The cores emulate the
 hardware. This project owns everything the player sees and touches.
 
-**Status: Phase 6 (visual effects) built.** Start the app and you get a game list that works with a
+**Status: Phase 6 done; Phase 7 (polish) under way, starting with run-ahead.** Start the app and you get a game list that works with a
 joystick alone: categories, search, favourites, previews, a pause menu in game, themes, and an attract
 mode that plays game demos when idle. Every key and button can be changed, per player, per device and
 per game, and there are settings for cabinets (sideways monitors, free play, a locked-down cabinet
 mode). In game there are save slots with pictures, rewind, fast-forward, slow motion, cheats and
 lasting high scores. The picture can look like an arcade monitor (scanlines, CRT effects, curved
 glass), with bezel artwork and size options, and any RetroArch GLSL shader preset can be added.
-Next is Phase 7: polish (input-lag reduction, recording, achievements, netplay, an installer).
+Run-ahead takes away a frame or two of input lag. Still to come in Phase 7: recording, achievements,
+netplay and an installer.
 
 ## Setup
 
@@ -71,6 +72,27 @@ up to a minute by default (from 15 seconds to 5 minutes, or off). The app record
 stored as compressed differences between frames (about 1 MB per minute for Gridlee; bigger games use more). Hold Tab to
 fast-forward (2× to 8×); F7 turns slow motion (½× or ¼×) on and off. Sound speeds up or slows
 down with the game, like a tape.
+
+**Run-ahead** (Options › Gameplay, off by default; applies from the next game you start) makes the controls answer a frame or two sooner. An
+arcade game usually shows the effect of a button a frame after it's pressed; with run-ahead the app
+plays that frame (and with 2, the one after) in secret each frame, shows its picture, then puts the
+game back, so you see the reaction at once. It costs under half a millisecond a frame for the test
+games. It needs a game that replays exactly from a save state; the app checks this as you play (every
+half second it compares a real frame with the picture it showed for it) and turns run-ahead off for
+the game, with a message, if they ever differ twice. FBNeo games pass; on MAME 2003-Plus some games
+drift after a while and get it turned off. It's skipped while fast-forwarding, in slow motion and
+when rewinding.
+
+How far ahead to run depends on the game, so **Automatic** works it out as you play. Each time the
+stick or a button changes, the app plays the next few frames in secret twice, with the controls as
+they were and as they are now, and notes the first frame whose picture differs. A game answers some
+moves later than others but never sooner than its built-in delay, so after three timings it runs
+ahead by the shortest one seen (at most 3 frames), refining it over twelve; the result is kept per
+game in `settings.json`, so the next session starts with it. Each timing also replays the old
+controls a second time, and is thrown away if that doesn't give the same pictures: a game that
+doesn't come back exactly from a saved state would otherwise look as if it answered at once. Measured
+on the test games: Gridlee 1 frame, Robby Roto 0 (it can answer in the same frame, so nothing to
+gain); Super Tank and Alien Arena can't be timed on MAME 2003-Plus, and run-ahead stays off for them.
 
 **Cheats** (pause menu › Cheats…) work for FBNeo games that have a cheat file in `system/fbneo/cheats/`.
 `fetch-deps.ps1 -Cheats` downloads FBNeo's collection (about 3,400 games). Cheats last until you leave the game.
@@ -177,7 +199,7 @@ Clones inside a merged parent zip aren't listed, because cores load games by fil
 |------|---------|
 | `src/Arcade.App` | The app: SDL3 window and main loop (`ArcadeApp`), scenes (`Browser/`, `GameScene`), `GameSession` (a running core with speed, rewind and save states), `StateSlots` and `StatePicker` (save slots), UI toolkit in `Ui/` (batched GL renderer, FontStashSharp text, themes, menus, input), `Controls/` (bindings, `controls.json`, the `ControlMapper` from keys and buttons to the core, the controls screen), `Video/` (RetroArch GLSL preset reader and multi-pass `ShaderChain`, built-in styles in `Video/Shaders/`, picture layout, bezels, the Picture menu), `VideoRenderer`, audio/input, `ScreenRotator` |
 | `src/Arcade.Library` | DAT parsing, CRC verification (incl. parent/BIOS sets), `SetClassifier` (status + core choice), SQLite `GameLibrary`, `LibraryScanner`, artwork lookup |
-| `src/Arcade.Libretro` | libretro host: `CoreHost` (load/run/serialize, environment callbacks), `RewindBuffer` (XOR + LZ4 history in a ring), `VideoFrame`, `PngEncoder`, `ScriptedInput` |
+| `src/Arcade.Libretro` | libretro host: `CoreHost` (load/run/serialize, run-ahead with its self-check, environment callbacks), `RewindBuffer` (XOR + LZ4 history in a ring), `VideoFrame`, `PngEncoder`, `ScriptedInput` |
 | `src/Arcade.Spike` | Headless runner from Phase 0: runs N frames, dumps a PNG, checks save-state determinism |
 | `tests/Arcade.Tests` | xUnit tests; core tests are skipped when cores/ROMs haven't been fetched |
 | `themes/` · `assets/fonts/` | Bundled themes; Press Start 2P and VT323 fonts (SIL Open Font License, see the OFL files) |

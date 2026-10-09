@@ -115,6 +115,40 @@ sealed class GameSession : IDisposable
     /// <summary>Game speed: 1 normally, above 1 to fast-forward, below 1 for slow motion.</summary>
     public double Speed { get; set; } = 1;
 
+    /// <summary>Frames of input lag to take away by running ahead (0 = off).</summary>
+    public int RunAheadFrames { get; set; }
+
+    RunAheadEstimator? _estimator;
+
+    Action? _cannotTime;
+
+    /// <summary>Timings thrown away (the game didn't replay the same way twice) before giving up on a game never timed.</summary>
+    const int UnrepeatableLimit = 6;
+
+    /// <summary>
+    /// Run as far ahead as this game needs, timing it as it's played. <paramref name="known"/> is
+    /// what an earlier session measured; <paramref name="measured"/> gets each new result to keep,
+    /// and <paramref name="cannotTime"/> is called if the game turns out not to replay exactly
+    /// enough to be timed (run-ahead then stays off).
+    /// </summary>
+    public void UseAutomaticRunAhead(int? known, Action<int> measured, Action cannotTime)
+    {
+        _cannotTime = cannotTime;
+        _estimator = new RunAheadEstimator(known);
+        RunAheadFrames = _estimator.Frames;
+        _host.LagMeasured += lag =>
+        {
+            if (_estimator.Add(lag))
+                measured(_estimator.Frames);
+            RunAheadFrames = _estimator.Frames;
+        };
+    }
+
+    public bool AutomaticRunAhead => _estimator != null;
+
+    /// <summary>Why run-ahead couldn't be used for this game, or null.</summary>
+    public string? RunAheadProblem => _host.RunAheadProblem;
+
     /// <summary>While true, the game runs backwards through the rewind history.</summary>
     public bool Rewinding { get; set; }
 
@@ -148,6 +182,14 @@ sealed class GameSession : IDisposable
         var rewinding = Rewinding && _rewind != null;
         var speed = rewinding ? 1 : Speed;
         _host.FastForwarding = speed > 1;
+        // Running ahead costs extra frames each frame; it only matters when playing at normal speed.
+        _host.RunAhead = speed == 1 && !rewinding ? RunAheadFrames : 0;
+        if (_estimator is { HasEstimate: false } && _host.UnrepeatableTimings >= UnrepeatableLimit && _cannotTime != null)
+        {
+            _estimator.GiveUp();
+            _cannotTime();
+        }
+        _host.MeasureLag = _estimator is { Done: false } && speed == 1 && !rewinding;
         _audio.Speed = speed;
         _audio.Suppressed = rewinding;
         if (!rewinding)
@@ -364,6 +406,8 @@ sealed class GameSession : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        if (RunAheadFrames > 0 || AutomaticRunAhead)
+            Console.WriteLine($"Input:  run-ahead {_host.RunAheadProblem ?? "stayed on"} at {RunAheadFrames} frame(s) ({_host.RunAheadChecks} self-checks)");
         _host.Dispose();
         _audio.Stop();
     }
