@@ -1,7 +1,8 @@
 # Downloads the libretro cores and the freely distributable test ROMs into the repo root.
 # Cores: libretro buildbot nightlies (FBNeo and MAME 2003-Plus are non-commercial licensed).
 # ROMs: only titles the rights holders released for free non-commercial use (https://www.mamedev.org/roms/).
-param([switch]$Force)
+# Also FBNeo's hiscore.dat (keeps high score tables), and with -Cheats the FBNeo cheat collection.
+param([switch]$Force, [switch]$Cheats)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -40,4 +41,26 @@ foreach ($dat in $dats.Keys) {
     if ((Test-Path $out) -and -not $Force) { Write-Host "have  $dat"; continue }
     Write-Host "fetch $dat"
     Invoke-WebRequest $dats[$dat] -OutFile $out
+}
+
+# High score tables (FBNeo looks for system/fbneo/hiscore.dat; MAME 2003-Plus has its own built in).
+$hiscore = Join-Path $root 'system\fbneo\hiscore.dat'
+New-Item -ItemType Directory -Force (Split-Path $hiscore) | Out-Null
+if ((Test-Path $hiscore) -and -not $Force) { Write-Host "have  hiscore.dat" }
+else {
+    Write-Host "fetch hiscore.dat"
+    Invoke-WebRequest 'https://raw.githubusercontent.com/libretro/FBNeo/master/metadata/hiscore.dat' -OutFile $hiscore
+}
+
+# Cheats for FBNeo games (about 3,400 files), shown in the pause menu under Cheats.
+if ($Cheats) {
+    $cheatDir = Join-Path $root 'system\fbneo\cheats'
+    $zip = Join-Path $root 'downloads\fbneo-cheats.zip'
+    Write-Host "fetch FBNeo cheats"
+    Invoke-WebRequest 'https://github.com/finalburnneo/FBNeo-cheats/archive/refs/heads/master.zip' -OutFile $zip
+    $unpacked = Join-Path $root 'downloads\fbneo-cheats'
+    Expand-Archive $zip -DestinationPath $unpacked -Force
+    New-Item -ItemType Directory -Force $cheatDir | Out-Null
+    Copy-Item (Join-Path $unpacked 'FBNeo-cheats-master\cheats\*') $cheatDir -Recurse -Force
+    Write-Host "      $((Get-ChildItem $cheatDir).Count) cheat files in system\fbneo\cheats"
 }

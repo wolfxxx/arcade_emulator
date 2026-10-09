@@ -315,6 +315,7 @@ sealed class BrowserScene : Scene
             Hint = "Keys, pads and arcade sticks for each player, hotkeys" + (game != null ? ", and this game's button layout" : ""),
         });
         items.Add(new MenuItem { Label = "Cabinet setup…", OnAccept = OpenCabinet, Hint = "Screen rotation, vertical games, free play, cabinet mode" });
+        items.Add(new MenuItem { Label = "Gameplay…", OnAccept = OpenGameplay, Hint = "Rewind, fast-forward and slow motion" });
         if (themes.Count > 0)
             items.Add(new MenuItem
             {
@@ -399,6 +400,45 @@ sealed class BrowserScene : Scene
                 Label = "Cabinet mode", Choices = ["Off", "On"], Choice = settings.Kiosk ? 1 : 0,
                 OnChoice = i => { settings.Kiosk = i == 1; Save(); },
                 Hint = $"Fullscreen, no settings or Quit for players. Operator: hold {App.UiInput.Label(UiAction.Back)} for {OperatorHoldSeconds:0} s",
+            },
+            new MenuItem { Label = "Done", OnAccept = OpenOptions },
+        ])
+        {
+            OnCancel = OpenOptions,
+        };
+    }
+
+    /// <summary>Rewind length and the fast-forward and slow-motion speeds.</summary>
+    void OpenGameplay()
+    {
+        var settings = App.Settings;
+        void Save() => settings.Save(App.SettingsPath);
+        int[] rewind = [0, 15, 30, 60, 120, 300];
+        double[] fast = [2, 3, 4, 6, 8];
+        double[] slow = [0.5, 0.25];
+        string Key(Hotkey hotkey) => App.Controls.HotkeyBindings(hotkey).FirstOrDefault() is var b && b != default ? b.Label : "its hotkey";
+        _menu = new Menu("Gameplay",
+        [
+            new MenuItem
+            {
+                Label = "Rewind", Choices = rewind.Select(s => s == 0 ? "Off" : s < 60 ? $"{s} seconds" : $"{s / 60} min").ToList(),
+                Choice = Math.Max(0, Array.IndexOf(rewind, settings.RewindSeconds)),
+                OnChoice = i => { settings.RewindSeconds = rewind[i]; Save(); },
+                Hint = $"Hold {Key(Hotkey.Rewind)} to run the game backwards · from the next game you start",
+            },
+            new MenuItem
+            {
+                Label = "Fast-forward", Choices = fast.Select(s => $"{s:0}× speed").ToList(),
+                Choice = Math.Max(0, Array.IndexOf(fast, settings.FastForwardSpeed)),
+                OnChoice = i => { settings.FastForwardSpeed = fast[i]; Save(); },
+                Hint = $"Hold {Key(Hotkey.FastForward)} to speed the game up",
+            },
+            new MenuItem
+            {
+                Label = "Slow motion", Choices = ["½ speed", "¼ speed"],
+                Choice = Math.Max(0, Array.IndexOf(slow, settings.SlowMotionSpeed)),
+                OnChoice = i => { settings.SlowMotionSpeed = slow[i]; Save(); },
+                Hint = $"{Key(Hotkey.SlowMotion)} turns slow motion on and off",
             },
             new MenuItem { Label = "Done", OnAccept = OpenOptions },
         ])
@@ -729,7 +769,7 @@ sealed class BrowserScene : Scene
         var players = g.Players is { } p ? $"{p} player{(p == 1 ? "" : "s")}" : null;
         Row("Players", string.Join(" · ", new[] { players, g.Control, g.Orientation == Orientation.Vertical ? "vertical screen" : null }.Where(s => s != null)));
         Row("Runs on", CoreName(g.CoreOverride ?? g.CoreId) + (g.CoreOverride != null ? " (your choice)" : ""));
-        Row("Played", g.PlayCount == 0 ? "never" : $"{g.PlayCount} time{(g.PlayCount == 1 ? "" : "s")}" + (g.LastPlayed is { } lp ? $", last {Ago(lp)}" : ""));
+        Row("Played", g.PlayCount == 0 ? "never" : $"{g.PlayCount} time{(g.PlayCount == 1 ? "" : "s")}" + (g.PlayTime >= TimeSpan.FromMinutes(1) ? $" · {Duration(g.PlayTime)}" : "") + (g.LastPlayed is { } lp ? $", last {Ago(lp)}" : ""));
         Row("Set", g.SetName + (g.Parent != null ? $" (version of {g.Parent})" : ""), t.TextDim);
         void Paragraph(string label, string text, Rgba color)
         {
@@ -761,6 +801,10 @@ sealed class BrowserScene : Scene
             : span.TotalDays < 2 ? "yesterday"
             : $"{(int)span.TotalDays} days ago";
     }
+
+    /// <summary>Time played, e.g. "25 min" or "3 h 10 min".</summary>
+    public static string Duration(TimeSpan time) =>
+        time.TotalHours < 1 ? $"{(int)time.TotalMinutes} min" : $"{(int)time.TotalHours} h {time.Minutes:00} min";
 
     void DrawWelcome(UiRenderer r, Theme t, RectF area)
     {

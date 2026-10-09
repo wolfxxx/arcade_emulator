@@ -18,9 +18,12 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
 {
     Menu? _menu;
     ControlsEditor? _controls;
+    StatePicker? _states;
     float _time;
+    bool _slowMotion;
+    bool _rewindWasHeld;
 
-    bool Paused => _menu != null || _controls != null;
+    bool Paused => _menu != null || _controls != null || _states != null;
 
     public override bool ClockPaced => !Paused && session.ClockPaced;
 
@@ -44,6 +47,8 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
             if (!hasArt)
                 App.SavePreview(session.CaptureImage(), App.AutoSnapPath(set));
         }
+        if (mode == GameMode.Play && !App.ReadOnly && App.Library.Find(session.SetName) != null)
+            App.Library.AddPlayTime(session.SetName, session.ActiveTime);
         session.Dispose();
     }
 
@@ -53,6 +58,21 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
         if (mode == GameMode.Attract)
         {
             UpdateAttract(dt, elapsed);
+            return;
+        }
+
+        if (_states != null)
+        {
+            _states.Update(App.UiInput.Actions, dt);
+            if (!_states.IsOpen)
+            {
+                var done = _states.Done;
+                _states = null;
+                if (done)
+                    CloseMenu(); // saved or loaded: straight back to the game
+                else
+                    OpenMenu();
+            }
             return;
         }
 
@@ -98,9 +118,21 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
                 case Hotkey.ExitGame:
                     App.ReturnToBrowser(session.SetName);
                     return;
+                case Hotkey.SlowMotion:
+                    _slowMotion = !_slowMotion;
+                    App.ShowMessage(_slowMotion ? $"Slow motion ({SpeedText(App.Settings.SlowMotionSpeed)})" : "Normal speed");
+                    break;
             }
         }
 
+        var mapper = App.GameInput.Mapper;
+        var rewind = mapper.IsHeld(Hotkey.Rewind);
+        if (rewind && !_rewindWasHeld && !session.CanRewind)
+            App.ShowMessage("Rewind is off — turn it on in Options › Gameplay");
+        _rewindWasHeld = rewind;
+        session.Rewinding = rewind;
+        session.Speed = mapper.IsHeld(Hotkey.FastForward) ? App.Settings.FastForwardSpeed
+            : _slowMotion ? App.Settings.SlowMotionSpeed : 1;
         session.Advance(elapsed);
         if (session.Host.ShutdownRequested)
             App.ReturnToBrowser(session.SetName);
@@ -166,13 +198,18 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
         _menu = new Menu(session.Title,
         [
             new MenuItem { Label = "Resume" },
-            new MenuItem { Label = "Save state", OnAccept = () => App.ShowMessage(session.SaveState()), Hint = "Shortcut: F2" },
-            new MenuItem { Label = "Load state", OnAccept = () => App.ShowMessage(session.LoadState()), Enabled = session.HasSavedState, Hint = "Shortcut: F4" },
-            new MenuItem { Label = "Reset game", OnAccept = () => { session.Reset(); App.ShowMessage("Reset"); }, Hint = "Shortcut: F3" },
+            new MenuItem { Label = "Save state…", OnAccept = () => OpenStates(saving: true), Hint = $"Pick a slot · {HotkeyHint(Hotkey.SaveState, $"saves to slot {session.CurrentSlot}")}" },
+            new MenuItem { Label = "Load state…", OnAccept = () => OpenStates(saving: false), Enabled = session.HasSavedState, Hint = $"Pick a slot · {HotkeyHint(Hotkey.LoadState, $"loads slot {session.CurrentSlot}")}" },
+            new MenuItem { Label = "Reset game", OnAccept = () => { session.Reset(); App.ShowMessage("Reset"); }, Hint = HotkeyHint(Hotkey.Reset, "resets") },
             new MenuItem
             {
                 Label = "Controls…", OnAccept = OpenControls,
                 Hint = "Change keys and buttons, this game's button layout and picture",
+            },
+            new MenuItem
+            {
+                Label = "Cheats…", OnAccept = OpenCheats, Enabled = session.Cheats.Count > 0,
+                Hint = session.Cheats.Count > 0 ? $"{session.Cheats.Count} cheat{(session.Cheats.Count == 1 ? "" : "s")} for this game" : "No cheat file for this game",
             },
             new MenuItem
             {
@@ -195,6 +232,39 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
             Subtitle = $"{session.CoreName} · {session.MeasuredFps:F1} fps",
             SidePanel = ControlsSummary(),
         };
+    }
+
+    void OpenStates(bool saving)
+    {
+        _states = new StatePicker(App, session, saving);
+    }
+
+    /// <summary>The game's cheats, each switched with left/right. They last until the game is closed.</summary>
+    void OpenCheats()
+    {
+        static string Plain(string value) =>
+            value.IndexOf(" - ", StringComparison.Ordinal) is var i and > 0 && int.TryParse(value[..i], out _) ? value[(i + 3)..] : value;
+        var items = session.Cheats.Select(cheat => new MenuItem
+        {
+            // FBNeo names them "[Cheat][set.ini] Infinite Lives".
+            Label = System.Text.RegularExpressions.Regex.Replace(cheat.Description, @"^(\[[^\]]*\]\s*)+", ""),
+            Choices = cheat.Values.Select(Plain).ToList(),
+            Choice = Math.Max(0, cheat.Values.ToList().IndexOf(cheat.Value)),
+            OnChoice = i => session.SetOption(cheat.Key, cheat.Values[i]),
+        }).ToList();
+        items.Add(new MenuItem { Label = "Done", OnAccept = OpenMenu });
+        _menu = new Menu("Cheats", items)
+        {
+            Subtitle = "Changes apply straight away and last until you leave the game",
+            OnCancel = OpenMenu,
+        };
+    }
+
+    /// <summary>"Shortcut: F2 saves to slot 1", from the hotkey's first key that works on its own.</summary>
+    string HotkeyHint(Hotkey hotkey, string does)
+    {
+        var binding = App.Controls.HotkeyBindings(hotkey).FirstOrDefault(b => !App.GameInput.Mapper.NeedsEnable(b));
+        return binding == default ? "" : $"Shortcut: {binding.Label} {does}";
     }
 
     void OpenControls()
@@ -261,8 +331,13 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
         if (mode == GameMode.Attract)
             DrawAttractBanner(r, w, h);
         else if (!Paused)
+        {
             DrawComboHint(r, w);
-        if (_controls != null)
+            DrawSpeedBadge(r, w);
+        }
+        if (_states != null)
+            _states.Draw(r, App.Theme, App.UiInput, dt);
+        else if (_controls != null)
             _controls.Draw(r, App.Theme, App.UiInput, dt);
         else
             _menu?.Draw(r, App.Theme, App.UiInput, dt);
@@ -278,6 +353,29 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
         var bar = new RectF(w / 2f - r.S(160), r.S(30), r.S(320), r.S(12));
         r.Fill(bar.Inset(-r.S(6)), Rgba.Black.WithAlpha(0.6f), r.S(12));
         r.Fill(bar with { W = bar.W * progress }, App.Theme.Accent, r.S(6));
+    }
+
+    static string SpeedText(double speed) => speed switch
+    {
+        0.5 => "½×",
+        0.25 => "¼×",
+        _ => $"{speed:0.##}×",
+    };
+
+    /// <summary>A small label in the corner while the game isn't running at normal speed.</summary>
+    void DrawSpeedBadge(UiRenderer r, int w)
+    {
+        var text = session.Rewinding && session.CanRewind ? (session.RewindAtStart ? "« Rewind — as far back as it goes" : "« Rewind")
+            : session.Speed > 1 ? $"» Fast-forward {SpeedText(session.Speed)}"
+            : session.Speed < 1 ? $"Slow motion {SpeedText(session.Speed)}"
+            : null;
+        if (text == null)
+            return;
+        var font = App.Theme.Body(r, 26);
+        var size = UiRenderer.Measure(font, text);
+        var box = new RectF(w - size.X - r.S(76), r.S(28), size.X + r.S(44), r.S(52));
+        r.Fill(box, Rgba.Black.WithAlpha(0.6f), box.H / 2);
+        r.Text(font, text, box.X + r.S(22), box.Y + (box.H - font.LineHeight) / 2, App.Theme.Accent);
     }
 
     void DrawAttractBanner(UiRenderer r, int w, int h)

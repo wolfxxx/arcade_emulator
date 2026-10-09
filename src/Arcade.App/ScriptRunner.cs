@@ -9,7 +9,7 @@ namespace Arcade.App;
 /// <c>--script "wait 2; down; down; shot list.png; accept; wait 3; hotkey menu; shot pause.png; quit"</c>.
 /// Commands: wait &lt;seconds&gt;, any menu action (up, accept, options…), key &lt;name&gt; (a raw key
 /// press such as f11), hotkey &lt;name&gt; (menu, savestate… as if its key were pressed in a game),
-/// type &lt;text&gt;, shot &lt;file.png&gt;, quit.
+/// hold &lt;hotkey&gt; &lt;seconds&gt; (e.g. hold rewind 2), type &lt;text&gt;, shot &lt;file.png&gt;, quit.
 /// </summary>
 sealed unsafe class ScriptRunner(ArcadeApp app, string script)
 {
@@ -42,6 +42,14 @@ sealed unsafe class ScriptRunner(ArcadeApp app, string script)
                     app.GameInput.Mapper.Inject(Enum.Parse<Controls.Hotkey>(arg, ignoreCase: true));
                     _wait = 0.1f;
                     return;
+                case "hold":
+                {
+                    var parts = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    var seconds = parts.Length > 1 ? float.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture) : 1;
+                    app.GameInput.Mapper.InjectHold(Enum.Parse<Controls.Hotkey>(parts[0], ignoreCase: true), seconds);
+                    _wait = 0.1f;
+                    return;
+                }
                 case "key":
                     PushKey(arg);
                     _wait = 0.1f;

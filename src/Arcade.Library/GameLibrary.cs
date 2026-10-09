@@ -21,17 +21,18 @@ public sealed record LibraryGame(
     string? CoreOverride,
     bool Favorite,
     int PlayCount,
-    DateTime? LastPlayed);
+    DateTime? LastPlayed,
+    TimeSpan PlayTime = default);
 
 public sealed record LibraryQuery(string? Search = null, bool IncludeUnplayable = false, bool FavoritesOnly = false, bool IncludeClones = true);
 
 /// <summary>
 /// The SQLite game library: ROM folders, a cache of zip CRCs (so rescans skip unchanged files),
-/// the scanned games, and per-game user data (core override, favourite, play count) that survives rescans.
+/// the scanned games, and per-game user data (core override, favourite, play count and time) that survives rescans.
 /// </summary>
 public sealed class GameLibrary : IDisposable
 {
-    const int SchemaVersion = 1;
+    const int SchemaVersion = 2;
     readonly SqliteConnection _db;
     SqliteTransaction? _tx;
 
@@ -50,9 +51,9 @@ public sealed class GameLibrary : IDisposable
         var version = Convert.ToInt32(Scalar("PRAGMA user_version"));
         if (version == SchemaVersion)
             return;
-        if (version != 0)
+        if (version is not (0 or 1))
         {
-            // Scanned data can always be rebuilt; keep the user's data.
+            // Scanned data can always be rebuilt; keep the user's data. (Version 1 only lacked play time.)
             Execute("DROP TABLE IF EXISTS games; DROP TABLE IF EXISTS zips;");
         }
         Execute($"""
@@ -64,9 +65,11 @@ public sealed class GameLibrary : IDisposable
                 status INTEGER NOT NULL, core TEXT, problem TEXT, warnings TEXT);
             CREATE TABLE IF NOT EXISTS user_games (
                 set_name TEXT PRIMARY KEY COLLATE NOCASE, core_override TEXT, favorite INTEGER NOT NULL DEFAULT 0,
-                play_count INTEGER NOT NULL DEFAULT 0, last_played TEXT);
-            PRAGMA user_version = {SchemaVersion};
+                play_count INTEGER NOT NULL DEFAULT 0, last_played TEXT, play_seconds INTEGER NOT NULL DEFAULT 0);
             """);
+        if (!Query("PRAGMA table_info(user_games)", r => r.GetString(1)).Contains("play_seconds"))
+            Execute("ALTER TABLE user_games ADD COLUMN play_seconds INTEGER NOT NULL DEFAULT 0");
+        Execute($"PRAGMA user_version = {SchemaVersion}");
     }
 
     // ---- Folders ----
@@ -131,7 +134,8 @@ public sealed class GameLibrary : IDisposable
 
     const string SelectGames = """
         SELECT g.set_name, g.path, g.title, g.year, g.manufacturer, g.parent, g.orientation, g.players, g.control, g.genre,
-               g.status, g.core, g.problem, g.warnings, u.core_override, COALESCE(u.favorite, 0), COALESCE(u.play_count, 0), u.last_played
+               g.status, g.core, g.problem, g.warnings, u.core_override, COALESCE(u.favorite, 0), COALESCE(u.play_count, 0), u.last_played,
+               COALESCE(u.play_seconds, 0)
         FROM games g LEFT JOIN user_games u ON u.set_name = g.set_name
         """;
 
@@ -160,7 +164,8 @@ public sealed class GameLibrary : IDisposable
         r.GetString(0), r.GetString(1), r.GetString(2), Str(r, 3), Str(r, 4), Str(r, 5), (Orientation)r.GetInt32(6),
         r.IsDBNull(7) ? null : r.GetInt32(7), Str(r, 8), Str(r, 9), (GameStatus)r.GetInt32(10), Str(r, 11), Str(r, 12),
         Str(r, 13)?.Split('\n') ?? [], Str(r, 14), r.GetInt64(15) != 0, r.GetInt32(16),
-        Str(r, 17) is { } played ? DateTime.Parse(played, null, System.Globalization.DateTimeStyles.RoundtripKind) : null);
+        Str(r, 17) is { } played ? DateTime.Parse(played, null, System.Globalization.DateTimeStyles.RoundtripKind) : null,
+        TimeSpan.FromSeconds(r.GetInt64(18)));
 
     static string? Str(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
 
@@ -176,6 +181,13 @@ public sealed class GameLibrary : IDisposable
             INSERT INTO user_games (set_name, play_count, last_played) VALUES ($s, 1, $t)
             ON CONFLICT(set_name) DO UPDATE SET play_count = play_count + 1, last_played = $t
             """, ("$s", setName), ("$t", when.ToUniversalTime().ToString("O")));
+
+    /// <summary>Adds time spent playing a game (menus and pauses not counted).</summary>
+    public void AddPlayTime(string setName, TimeSpan time) =>
+        Execute("""
+            INSERT INTO user_games (set_name, play_seconds) VALUES ($s, $n)
+            ON CONFLICT(set_name) DO UPDATE SET play_seconds = play_seconds + $n
+            """, ("$s", setName), ("$n", (long)Math.Round(time.TotalSeconds)));
 
     public IReadOnlyDictionary<string, string> CoreOverrides() =>
         Query("SELECT set_name, core_override FROM user_games WHERE core_override IS NOT NULL", r => (r.GetString(0), r.GetString(1)))

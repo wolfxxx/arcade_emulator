@@ -161,19 +161,29 @@ public sealed unsafe class CoreHost : IDisposable
 
     public void Reset() => _retroReset();
 
+    /// <summary>Bytes a save state needs right now, or 0 if the game can't be saved.</summary>
+    public int StateSize => (int)_retroSerializeSize();
+
     public byte[] SaveState()
     {
-        var size = _retroSerializeSize();
+        var size = StateSize;
         if (size == 0)
             throw new NotSupportedException($"{Info.Name} does not support save states for this game.");
-        var buffer = new byte[(int)size];
-        fixed (byte* p = buffer)
-        {
-            if (_retroSerialize(p, size) == 0)
-                throw new InvalidOperationException("retro_serialize failed.");
-        }
+        var buffer = new byte[size];
+        if (!TrySaveState(buffer))
+            throw new InvalidOperationException("retro_serialize failed.");
         return buffer;
     }
+
+    /// <summary>Saves into a buffer of exactly <see cref="StateSize"/> bytes without allocating (rewind does this every frame).</summary>
+    public bool TrySaveState(Span<byte> buffer)
+    {
+        fixed (byte* p = buffer)
+            return _retroSerialize(p, (nuint)buffer.Length) != 0;
+    }
+
+    /// <summary>Tells the core the game is being fast-forwarded (some skip work they don't need then).</summary>
+    public bool FastForwarding { get; set; }
 
     public void LoadState(ReadOnlySpan<byte> state)
     {
@@ -375,7 +385,7 @@ public sealed unsafe class CoreHost : IDisposable
                 *(int*)data = 1 | 2; // video and audio enabled
                 return true;
             case RetroEnv.GetFastForwarding:
-                *(byte*)data = 0;
+                *(byte*)data = FastForwarding ? (byte)1 : (byte)0;
                 return true;
             case RetroEnv.GetTargetRefreshRate:
                 *(float*)data = 60f;

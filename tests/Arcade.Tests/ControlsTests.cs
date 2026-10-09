@@ -321,6 +321,51 @@ public class ControlMapperTests
     }
 
     [Fact]
+    public void Rewind_and_fast_forward_last_while_held()
+    {
+        var mapper = new ControlMapper(ControlConfig.Defaults());
+        var input = new FakeInput();
+        input.Keys.Add(SDL_Scancode.SDL_SCANCODE_BACKSPACE);
+        mapper.Update(input, 0.016f);
+        Assert.True(mapper.IsHeld(Hotkey.Rewind));
+        mapper.Update(input, 0.016f);
+        Assert.True(mapper.IsHeld(Hotkey.Rewind));
+        Assert.False(mapper.IsHeld(Hotkey.FastForward));
+        input.Keys.Clear();
+        mapper.Update(input, 0.016f);
+        Assert.False(mapper.IsHeld(Hotkey.Rewind));
+
+        // On a pad the trigger is a game button, so it rewinds only with hotkey enable held, after the hold time.
+        var pad = new FakeDevice("Xbox Controller");
+        input.DeviceList.Add(pad);
+        pad.Down.Add(Binding.Parse("pad:left_trigger+"));
+        mapper.Update(input, 0.3f);
+        Assert.False(mapper.IsHeld(Hotkey.Rewind));
+        pad.Down.Add(Pad("back"));
+        mapper.Update(input, 0.3f);
+        Assert.False(mapper.IsHeld(Hotkey.Rewind));
+        mapper.Update(input, 0.3f);
+        Assert.True(mapper.IsHeld(Hotkey.Rewind));
+    }
+
+    [Fact]
+    public void A_key_still_held_when_a_menu_closes_does_not_start_rewinding()
+    {
+        var mapper = new ControlMapper(ControlConfig.Defaults());
+        var input = new FakeInput();
+        input.Keys.Add(SDL_Scancode.SDL_SCANCODE_BACKSPACE); // Backspace also closes menus
+        mapper.Update(input, 0.016f);
+        mapper.ResetHotkeys();
+        mapper.Update(input, 0.016f);
+        Assert.False(mapper.IsHeld(Hotkey.Rewind));
+        input.Keys.Clear();
+        mapper.Update(input, 0.016f);
+        input.Keys.Add(SDL_Scancode.SDL_SCANCODE_BACKSPACE);
+        mapper.Update(input, 0.016f);
+        Assert.True(mapper.IsHeld(Hotkey.Rewind));
+    }
+
+    [Fact]
     public void Menus_follow_player_one_and_every_pad_but_not_other_players_keys()
     {
         var mapper = new ControlMapper(ControlConfig.Defaults());

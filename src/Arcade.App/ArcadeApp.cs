@@ -78,6 +78,8 @@ sealed unsafe class ArcadeApp : IDisposable
         Options = options;
         Settings = Settings.Load(SettingsPath);
         Settings.ReadOnly = options.Offscreen != null;
+        if (options.Offscreen != null) // automated runs keep the cores' NVRAM and high scores away from the player's
+            Paths = Paths with { Saves = Path.Combine(Path.GetTempPath(), "arcade-readonly", "saves") };
         Controls = ControlConfig.Load(ControlsPath, message => Console.Error.WriteLine(message));
         Catalog = new CoreCatalog(Paths);
         Artwork = new ArtworkLocator(Paths.Artwork);
@@ -116,7 +118,7 @@ sealed unsafe class ArcadeApp : IDisposable
         if (Options.RomPath != null)
         {
             direct = GameSession.Start(Paths, Catalog, Options.RomPath, Options.Core, GameInput, Audio, Options.Verbose);
-            ConfigureGame(direct);
+            PrepareSession(direct, GameMode.Play);
             if (Options.Offscreen == null && Library.Find(direct.SetName) != null)
                 Library.RecordPlay(direct.SetName, DateTime.Now);
         }
@@ -248,7 +250,7 @@ sealed unsafe class ArcadeApp : IDisposable
                 mode == GameMode.Attract ? NullInput.Instance : GameInput, Audio, Options.Verbose);
             if (mode == GameMode.Attract || ReadOnly)
                 Audio.Muted = true;
-            ConfigureGame(session);
+            PrepareSession(session, mode);
             if (mode == GameMode.Play && !ReadOnly)
                 Library.RecordPlay(game.SetName, DateTime.Now);
             SwitchTo(new GameScene(this, session, mode, game));
@@ -270,6 +272,23 @@ sealed unsafe class ArcadeApp : IDisposable
             return;
         }
         SwitchTo(new BrowserScene(this, selectSet));
+    }
+
+    /// <summary>
+    /// Save states go to states/ beside the app. Automated runs use a scratch folder instead, so
+    /// they never touch the player's saves.
+    /// </summary>
+    public string StatesDir => ReadOnly ? Path.Combine(Path.GetTempPath(), "arcade-readonly", "states") : Path.Combine(Paths.Root, "states");
+
+    /// <summary>Gets a new game ready: its controls and picture, save-state slots and rewind history.</summary>
+    void PrepareSession(GameSession session, GameMode mode)
+    {
+        ConfigureGame(session);
+        if (mode != GameMode.Play)
+            return; // attract mode doesn't save or rewind
+        session.Slots = new StateSlots(StatesDir, session.SetName, ReadOnly ? null : Path.Combine(Paths.Saves, session.SetName + ".state"));
+        session.CurrentSlot = session.Slots.Newest ?? 1;
+        session.EnableRewind(Settings.RewindSeconds);
     }
 
     // ---- Controls and cabinet ----

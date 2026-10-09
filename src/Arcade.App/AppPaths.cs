@@ -9,7 +9,8 @@ sealed record AppPaths(string Root)
     public string Cores => Path.Combine(Root, "cores");
     public string Dats => Path.Combine(Root, "dats");
     public string System => Path.Combine(Root, "system");
-    public string Saves => Path.Combine(Root, "saves");
+    /// <summary>Where cores keep NVRAM, high scores and their own settings.</summary>
+    public string Saves { get; init; } = Path.Combine(Root, "saves");
     public string Roms => Path.Combine(Root, "roms");
     public string Artwork => Path.Combine(Root, "artwork");
     public string LibraryDb => Path.Combine(Root, "library.db");

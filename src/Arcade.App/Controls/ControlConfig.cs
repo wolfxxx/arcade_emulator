@@ -154,6 +154,10 @@ sealed class ControlConfig
         [Hotkey.Reset] = [K(SDL_Scancode.SDL_SCANCODE_F3)],
         [Hotkey.Screenshot] = [K(SDL_Scancode.SDL_SCANCODE_F12)],
         [Hotkey.ExitGame] = [],
+        // On a pad the triggers are game buttons 7 and 8, so these need hotkey-enable (Back) held.
+        [Hotkey.Rewind] = [K(SDL_Scancode.SDL_SCANCODE_BACKSPACE), Binding.PadAxis(SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1)],
+        [Hotkey.FastForward] = [K(SDL_Scancode.SDL_SCANCODE_TAB), Binding.PadAxis(SDL_GamepadAxis.SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1)],
+        [Hotkey.SlowMotion] = [K(SDL_Scancode.SDL_SCANCODE_F7)],
     };
 
     public static List<Binding> DefaultHotkeyEnable() => [P(SDL_GamepadButton.SDL_GAMEPAD_BUTTON_BACK)];

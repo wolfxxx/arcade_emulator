@@ -23,7 +23,8 @@ sealed unsafe class AudioOutput : IAudioSink, IDisposable
 
     /// <summary>Lowest queue level seen since the last <see cref="ResetStats"/>; near 0 means sound was about to gap.</summary>
     public double LowestQueuedSeconds { get; private set; } = double.MaxValue;
-    public double QueuedSeconds => _stream == null ? 0 : SDL_GetAudioStreamQueued(_stream) / (4.0 * _sampleRate);
+    /// <summary>Seconds until the queued audio has played (at the current <see cref="Speed"/>).</summary>
+    public double QueuedSeconds => _stream == null ? 0 : SDL_GetAudioStreamQueued(_stream) / (4.0 * _sampleRate * _speed);
     public float CurrentRatio { get; private set; } = 1f;
 
     /// <summary>(Re)opens the output for the core's sample rate. Samples written before this are dropped.</summary>
@@ -44,9 +45,30 @@ sealed unsafe class AudioOutput : IAudioSink, IDisposable
     /// <summary>Drops the core's audio instead of playing it (attract mode).</summary>
     public bool Muted { get; set; }
 
+    /// <summary>Drops audio for a moment, e.g. while rewinding (separate from <see cref="Muted"/>, which the app owns).</summary>
+    public bool Suppressed { get; set; }
+
+    double _speed = 1;
+
+    /// <summary>
+    /// Game speed (fast-forward, slow motion). Sound plays faster or slower to match, like a tape;
+    /// queued sound is dropped on a change so the delay stays short.
+    /// </summary>
+    public double Speed
+    {
+        get => _speed;
+        set
+        {
+            if (value == _speed || value <= 0)
+                return;
+            _speed = value;
+            Flush();
+        }
+    }
+
     public void Write(ReadOnlySpan<short> interleavedStereo)
     {
-        if (_stream == null || interleavedStereo.IsEmpty || Muted)
+        if (_stream == null || interleavedStereo.IsEmpty || Muted || Suppressed)
             return;
         fixed (short* p = interleavedStereo)
             SDL_PutAudioStreamData(_stream, (nint)p, interleavedStereo.Length * sizeof(short));
@@ -76,7 +98,7 @@ sealed unsafe class AudioOutput : IAudioSink, IDisposable
         _smoothedQueue += (queued - _smoothedQueue) * 0.05;
         var deviation = Math.Clamp((_smoothedQueue - TargetLatency) / TargetLatency, -1, 1);
         // More queued than wanted -> consume slightly faster (ratio > 1), and vice versa.
-        CurrentRatio = (float)(1 + MaxRateAdjust * deviation);
+        CurrentRatio = (float)(_speed * (1 + MaxRateAdjust * deviation));
         SDL_SetAudioStreamFrequencyRatio(_stream, CurrentRatio);
     }
 
@@ -105,6 +127,8 @@ sealed unsafe class AudioOutput : IAudioSink, IDisposable
         Close();
         _sampleRate = 0;
         Muted = false;
+        Suppressed = false;
+        _speed = 1;
     }
 
     void Close()
