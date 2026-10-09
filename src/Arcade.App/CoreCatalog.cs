@@ -3,7 +3,12 @@ using Arcade.Library;
 namespace Arcade.App;
 
 /// <param name="SamplesFolder">Where the core looks for sample zips, relative to the system folder.</param>
-sealed record CoreDefinition(string Id, string DisplayName, string DllName, string DatName, string SamplesFolder);
+/// <param name="RunAhead">
+/// The core comes back exactly from its save states, which run-ahead (and timing the controls)
+/// relies on every frame. MAME 2003-Plus doesn't: each reload leaves a little behind, and over a few
+/// hundred frames games like Super Tank and Alien Arena crash.
+/// </param>
+sealed record CoreDefinition(string Id, string DisplayName, string DllName, string DatName, string SamplesFolder, bool RunAhead);
 
 sealed record CoreChoice(CoreDefinition? Core, string DllPath, SetAssessment? Assessment)
 {
@@ -17,10 +22,19 @@ sealed class CoreCatalog(AppPaths paths)
     // Order is preference: FBNeo is more accurate for the games both cores support.
     public static readonly CoreDefinition[] Known =
     [
-        new("fbneo", "FinalBurn Neo", "fbneo_libretro.dll", "fbneo.dat", Path.Combine("fbneo", "samples")),
-        new("mame2003_plus", "MAME 2003-Plus", "mame2003_plus_libretro.dll", "mame2003_plus.dat", Path.Combine("mame2003-plus", "samples")),
+        new("fbneo", "FinalBurn Neo", "fbneo_libretro.dll", "fbneo.dat", Path.Combine("fbneo", "samples"), RunAhead: true),
+        new("mame2003_plus", "MAME 2003-Plus", "mame2003_plus_libretro.dll", "mame2003_plus.dat", Path.Combine("mame2003-plus", "samples"), RunAhead: false),
     ];
 
+
+    /// <summary>
+    /// Games one core serves better in a way the DATs can't show, by set name. Used when the player
+    /// hasn't picked a core for the game, and only if that core can play the set.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> PreferredCores = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["robby"] = "mame2003_plus", // FBNeo's Robby Roto driver keeps no high scores
+    };
 
     public static CoreDefinition? Find(string id) => Known.FirstOrDefault(c => c.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
 
@@ -40,6 +54,7 @@ sealed class CoreCatalog(AppPaths paths)
     {
         Genres = IniLists.Load(Path.Combine(paths.Dats, "catver.ini"), "Category"),
         NPlayers = IniLists.Load(Path.Combine(paths.Dats, "nplayers.ini"), "NPlayers"),
+        PreferredCores = PreferredCores,
     };
 
     /// <param name="forcedCore">A core id from <see cref="Known"/> or a path to any libretro DLL; null to auto-select.</param>
@@ -61,7 +76,7 @@ sealed class CoreCatalog(AppPaths paths)
             return new CoreChoice(fallback, DllPath(fallback), null);
         }
 
-        var assessment = Assess(romPath, forced?.Id);
+        var assessment = Assess(romPath, forced?.Id ?? PreferredCores.GetValueOrDefault(Path.GetFileNameWithoutExtension(romPath)));
         if (forced != null)
             return new CoreChoice(forced, DllPath(forced), assessment.Core?.Id == forced.Id ? assessment : null);
         if (assessment.Status == GameStatus.Playable)

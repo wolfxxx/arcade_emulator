@@ -342,6 +342,12 @@ sealed class BrowserScene : Scene
         });
         items.Add(new MenuItem { Label = "Add ROM folder…", OnAccept = AddFolder });
         items.Add(new MenuItem { Label = "Rescan library", OnAccept = App.StartScan, Enabled = !App.Scanning });
+        items.Add(new MenuItem
+        {
+            Label = "Update emulator cores", OnAccept = () => { App.StartCoreUpdate(); _menu = null; },
+            Enabled = !App.UpdatingCores && !App.Scanning,
+            Hint = "Downloads the newest FinalBurn Neo and MAME 2003-Plus, then rescans the library",
+        });
         items.Add(new MenuItem { Label = "Quit", OnAccept = App.Quit });
 
         _menu = new Menu("Options", items) { Subtitle = game != null ? game.Title : null };
