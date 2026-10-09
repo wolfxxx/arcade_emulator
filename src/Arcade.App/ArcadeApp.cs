@@ -40,6 +40,8 @@ sealed unsafe class ArcadeApp : IDisposable
     public AppWindow Window { get; private set; } = null!;
     public UiRenderer Ui { get; private set; } = null!;
     public VideoRenderer Video { get; private set; } = null!;
+    /// <summary>The picture styles: built in, plus presets in the shaders folder.</summary>
+    public Video.ShaderLibrary Shaders { get; }
     public ImageCache Images { get; private set; } = null!;
     public Theme Theme { get; private set; } = null!;
     public InputManager GameInput { get; private set; } = null!;
@@ -83,6 +85,7 @@ sealed unsafe class ArcadeApp : IDisposable
         Controls = ControlConfig.Load(ControlsPath, message => Console.Error.WriteLine(message));
         Catalog = new CoreCatalog(Paths);
         Artwork = new ArtworkLocator(Paths.Artwork);
+        Shaders = new Video.ShaderLibrary(Paths.Shaders);
     }
 
     public int Run()
@@ -131,7 +134,7 @@ sealed unsafe class ArcadeApp : IDisposable
         if (Kiosk && !Window.Offscreen)
             SDL_HideCursor();
         Ui = new UiRenderer(Window.Gl);
-        Video = new VideoRenderer(Window.Gl);
+        Video = new VideoRenderer(Window.Gl, Shaders, ShowMessage);
         Images = new ImageCache(Window.Gl);
         Theme = Theme.Load(ThemesDir, Paths.Root, Settings.Theme, ShowMessage);
         if (Options.Script != null)

@@ -17,6 +17,7 @@ const string Usage = """
       set-core <set> <core|auto>  always run a game on a given core
       favorite <set> [off]        mark or unmark a favourite
       folders [--remove <folder>] show or remove library folders
+      shaders [--check] [folder]  list picture styles; --check tests each preset in a hidden window
 
     Game list: arrows move · Enter play · F favourite · Tab options · / search
                Q/W category · ←/→ jump letter · Esc quit
@@ -41,6 +42,8 @@ if (args.Length > 0 && args[0] is "-h" or "--help" or "/?")
 var paths = AppPaths.Discover();
 if (args.Length > 0 && LibraryCommands.Names.Contains(args[0]) && !File.Exists(args[0]))
     return new LibraryCommands(paths).Run(args[0], args[1..]);
+if (args.Length > 0 && args[0] == "shaders" && !File.Exists(args[0]))
+    return Arcade.App.Video.ShaderCommand.Run(paths, args[1..]);
 
 string? rom = null, core = null, script = null;
 bool? fullscreen = null;

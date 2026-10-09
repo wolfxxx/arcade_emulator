@@ -49,6 +49,8 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
         }
         if (mode == GameMode.Play && !App.ReadOnly && App.Library.Find(session.SetName) != null)
             App.Library.AddPlayTime(session.SetName, session.ActiveTime);
+        _bezel?.Texture.Dispose();
+        _bezel = null;
         session.Dispose();
     }
 
@@ -208,6 +210,11 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
             },
             new MenuItem
             {
+                Label = "Picture…", OnAccept = () => new Video.PictureMenu(App, session, m => _menu = m, OpenMenu).Open(),
+                Hint = "Scanlines, CRT effects, size and shape, bezel artwork",
+            },
+            new MenuItem
+            {
                 Label = "Cheats…", OnAccept = OpenCheats, Enabled = session.Cheats.Count > 0,
                 Hint = session.Cheats.Count > 0 ? $"{session.Cheats.Count} cheat{(session.Cheats.Count == 1 ? "" : "s")} for this game" : "No cheat file for this game",
             },
@@ -324,10 +331,16 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
     public override void Draw(float dt)
     {
         var (w, h) = App.ScreenSize;
-        session.Draw(App.Video, new RectF(0, 0, w, h), h);
+        var picture = App.Settings.PictureFor(session.SetName);
+        var screen = new RectF(0, 0, w, h);
+        var bezel = Bezel(picture);
+        var placed = bezel?.Bezel.Place(screen);
+        session.Draw(App.Video, placed?.Window ?? screen, h, picture);
 
         var r = App.Ui;
         r.Begin(w, h);
+        if (bezel != null)
+            r.Image(bezel.Value.Texture, placed!.Value.Image);
         if (mode == GameMode.Attract)
             DrawAttractBanner(r, w, h);
         else if (!Paused)
@@ -342,6 +355,40 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
         else
             _menu?.Draw(r, App.Theme, App.UiInput, dt);
         r.End();
+    }
+
+    // ---- Bezel ----
+
+    string? _bezelPath;
+    (Video.Bezel Bezel, Texture Texture)? _bezel;
+    readonly HashSet<string> _badBezels = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The bezel artwork to draw around the game, loaded when the setting or the artwork changes.</summary>
+    (Video.Bezel Bezel, Texture Texture)? Bezel(Video.PictureSettings picture)
+    {
+        var path = picture.Bezel ? Video.Bezel.Find(App.Paths.Artwork, session.SetName, game?.Parent ?? App.Library.Find(session.SetName)?.Parent, session.DisplayAspect < 1) : null;
+        if (path != null && _badBezels.Contains(path))
+            path = null;
+        if (path == _bezelPath)
+            return _bezel;
+        _bezel?.Texture.Dispose();
+        _bezel = null;
+        _bezelPath = path;
+        if (path == null)
+            return null;
+        try
+        {
+            var loaded = Video.Bezel.Load(path);
+            _bezel = (loaded, new Texture(App.Window.Gl, loaded.Width, loaded.Height, loaded.Pixels));
+        }
+        catch (InvalidDataException e)
+        {
+            _badBezels.Add(path);
+            Console.Error.WriteLine(e.Message);
+            if (mode == GameMode.Play)
+                App.ShowMessage(e.Message);
+        }
+        return _bezel;
     }
 
     /// <summary>A small bar while a hotkey-enable combination is being held, so people know to keep holding.</summary>
