@@ -1,3 +1,4 @@
+using Arcade.App.Controls;
 using Arcade.Libretro;
 using SDL;
 using static SDL.SDL3;
@@ -5,164 +6,219 @@ using static SDL.SDL3;
 namespace Arcade.App;
 
 /// <summary>
-/// Maps the keyboard and SDL gamepads onto libretro's RetroPad, one port per player.
-/// Keyboard drives player 1 (plus coin/start for player 2). Gamepads take ports in connection
-/// order, so the first pad also drives player 1 alongside the keyboard.
+/// Owns the keyboard and every connected gamepad or joystick, and feeds them through a
+/// <see cref="ControlMapper"/> to the core (one port per player), the menus and the hotkeys.
+/// Devices take players in connection order; the keyboard has its own keys for each player.
 /// </summary>
-sealed unsafe class InputManager : IInputSource, IDisposable
+sealed unsafe class InputManager : IInputSource, IRawInput, IDisposable
 {
-    public const int MaxPlayers = 4;
-    const short StickThreshold = 16384; // half deflection
+    const short AxisThreshold = 16384;   // half deflection counts as pressed
+    const short CaptureThreshold = 24000; // capturing needs a firmer push, so a resting stick isn't picked up
 
-    // RetroArch-style defaults plus MAME-style arcade keys, so either habit works.
-    static readonly (SDL_Scancode Key, JoypadButton Button)[] Player1Keys =
-    [
-        (SDL_Scancode.SDL_SCANCODE_UP, JoypadButton.Up),
-        (SDL_Scancode.SDL_SCANCODE_DOWN, JoypadButton.Down),
-        (SDL_Scancode.SDL_SCANCODE_LEFT, JoypadButton.Left),
-        (SDL_Scancode.SDL_SCANCODE_RIGHT, JoypadButton.Right),
-        (SDL_Scancode.SDL_SCANCODE_Z, JoypadButton.B),          // button 1
-        (SDL_Scancode.SDL_SCANCODE_X, JoypadButton.A),          // button 2
-        (SDL_Scancode.SDL_SCANCODE_A, JoypadButton.Y),          // button 3
-        (SDL_Scancode.SDL_SCANCODE_S, JoypadButton.X),          // button 4
-        (SDL_Scancode.SDL_SCANCODE_Q, JoypadButton.L),          // button 5
-        (SDL_Scancode.SDL_SCANCODE_W, JoypadButton.R),          // button 6
-        (SDL_Scancode.SDL_SCANCODE_LCTRL, JoypadButton.B),
-        (SDL_Scancode.SDL_SCANCODE_LALT, JoypadButton.A),
-        (SDL_Scancode.SDL_SCANCODE_SPACE, JoypadButton.Y),
-        (SDL_Scancode.SDL_SCANCODE_LSHIFT, JoypadButton.X),
-        (SDL_Scancode.SDL_SCANCODE_5, JoypadButton.Select),     // insert coin
-        (SDL_Scancode.SDL_SCANCODE_1, JoypadButton.Start),
-        (SDL_Scancode.SDL_SCANCODE_RETURN, JoypadButton.Start),
-    ];
-
-    static readonly (SDL_Scancode Key, JoypadButton Button)[] Player2Keys =
-    [
-        (SDL_Scancode.SDL_SCANCODE_6, JoypadButton.Select),
-        (SDL_Scancode.SDL_SCANCODE_2, JoypadButton.Start),
-    ];
-
-    static readonly (SDL_GamepadButton Pad, JoypadButton Button)[] PadButtons =
-    [
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_SOUTH, JoypadButton.B),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_EAST, JoypadButton.A),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_WEST, JoypadButton.Y),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_NORTH, JoypadButton.X),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, JoypadButton.L),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, JoypadButton.R),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_LEFT_STICK, JoypadButton.L3),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_RIGHT_STICK, JoypadButton.R3),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_BACK, JoypadButton.Select),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_START, JoypadButton.Start),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_UP, JoypadButton.Up),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_DOWN, JoypadButton.Down),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_LEFT, JoypadButton.Left),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_RIGHT, JoypadButton.Right),
-    ];
-
-    readonly List<(SDL_JoystickID Id, nint Pad)> _pads = new();
-    readonly ushort[] _buttons = new ushort[MaxPlayers];
-    readonly short[,] _leftStick = new short[MaxPlayers, 2];
+    readonly List<SdlDevice> _devices = new();
     readonly SDLBool* _keyboard;
 
-    /// <summary>Raised with a short description whenever a gamepad connects or disconnects.</summary>
+    public ControlMapper Mapper { get; }
+
+    /// <summary>Raised with a short description whenever a device connects or disconnects.</summary>
     public event Action<string>? Message;
 
-    public InputManager()
+    public InputManager(ControlConfig config)
     {
+        Mapper = new ControlMapper(config);
         _keyboard = SDL_GetKeyboardState(null); // valid for the lifetime of the app
-        using var existing = SDL_GetGamepads();
+        using var existing = SDL_GetJoysticks();
         if (existing != null)
             foreach (var id in existing)
-                AddGamepad(id);
+                AddDevice(id, announce: false);
     }
 
-    public int GamepadCount => _pads.Count;
+    public IReadOnlyList<IRawDevice> Devices => _devices;
+    public bool IsKeyDown(int scancode) => scancode is >= 0 and < (int)SDL_Scancode.SDL_SCANCODE_COUNT && _keyboard[scancode];
 
-    public void AddGamepad(SDL_JoystickID id)
+    /// <summary>Name of the device driving a player, or null if none is connected for them.</summary>
+    public string? DeviceName(int player) => player < _devices.Count ? _devices[player].Name : null;
+
+    public void AddDevice(SDL_JoystickID id, bool announce = true)
     {
-        if (_pads.Any(p => p.Id == id))
+        if (_devices.Any(d => d.Id == id))
             return;
-        var pad = SDL_OpenGamepad(id);
-        if (pad == null)
-            return;
-        _pads.Add((id, (nint)pad));
-        Message?.Invoke($"Controller {_pads.Count} connected: {SDL_GetGamepadName(pad)}");
+        SdlDevice device;
+        if (SDL_IsGamepad(id))
+        {
+            var pad = SDL_OpenGamepad(id);
+            if (pad == null)
+                return;
+            device = new SdlDevice(id, pad, SDL_GetGamepadJoystick(pad), SDL_GetGamepadName(pad) ?? "Gamepad");
+        }
+        else
+        {
+            var joystick = SDL_OpenJoystick(id);
+            if (joystick == null)
+                return;
+            device = new SdlDevice(id, null, joystick, SDL_GetJoystickName(joystick) ?? "Joystick");
+        }
+        _devices.Add(device);
+        if (announce)
+            Message?.Invoke($"Player {_devices.Count} controller connected: {device.Name}");
     }
 
-    public void RemoveGamepad(SDL_JoystickID id)
+    public void RemoveDevice(SDL_JoystickID id)
     {
-        var index = _pads.FindIndex(p => p.Id == id);
+        var index = _devices.FindIndex(d => d.Id == id);
         if (index < 0)
             return;
-        SDL_CloseGamepad((SDL_Gamepad*)_pads[index].Pad);
-        _pads.RemoveAt(index);
-        Message?.Invoke($"Controller {index + 1} disconnected");
+        _devices[index].Close();
+        _devices.RemoveAt(index);
+        Message?.Invoke($"Player {index + 1} controller disconnected");
     }
 
-    /// <summary>Open gamepad handles (SDL_Gamepad*), for reading menu input from the same pads.</summary>
-    public IEnumerable<nint> Pads => _pads.Select(p => p.Pad);
+    // ---- To the core ----
 
-    /// <summary>True while any gamepad holds Back + Start together (the pad "menu" chord).</summary>
-    public bool MenuChordHeld => _pads.Any(p =>
-        SDL_GetGamepadButton((SDL_Gamepad*)p.Pad, SDL_GamepadButton.SDL_GAMEPAD_BUTTON_BACK) &&
-        SDL_GetGamepadButton((SDL_Gamepad*)p.Pad, SDL_GamepadButton.SDL_GAMEPAD_BUTTON_START));
-
-    /// <summary>True while any gamepad holds its Guide (Xbox / PS) button.</summary>
-    public bool GuideHeld => _pads.Any(p => SDL_GetGamepadButton((SDL_Gamepad*)p.Pad, SDL_GamepadButton.SDL_GAMEPAD_BUTTON_GUIDE));
-
-    public void Poll()
-    {
-        Array.Clear(_buttons);
-        Array.Clear(_leftStick);
-
-        foreach (var (key, button) in Player1Keys)
-            if (_keyboard[(int)key])
-                _buttons[0] |= (ushort)(1 << (int)button);
-        foreach (var (key, button) in Player2Keys)
-            if (_keyboard[(int)key])
-                _buttons[1] |= (ushort)(1 << (int)button);
-
-        for (var port = 0; port < Math.Min(_pads.Count, MaxPlayers); port++)
-        {
-            var pad = (SDL_Gamepad*)_pads[port].Pad;
-            ushort bits = 0;
-            foreach (var (padButton, button) in PadButtons)
-                if (SDL_GetGamepadButton(pad, padButton))
-                    bits |= (ushort)(1 << (int)button);
-
-            var x = SDL_GetGamepadAxis(pad, SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFTX);
-            var y = SDL_GetGamepadAxis(pad, SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFTY);
-            _leftStick[port, 0] = x;
-            _leftStick[port, 1] = y;
-            // The left stick also acts as a digital stick, which is what arcade games expect.
-            if (x < -StickThreshold) bits |= 1 << (int)JoypadButton.Left;
-            if (x > StickThreshold) bits |= 1 << (int)JoypadButton.Right;
-            if (y < -StickThreshold) bits |= 1 << (int)JoypadButton.Up;
-            if (y > StickThreshold) bits |= 1 << (int)JoypadButton.Down;
-            if (SDL_GetGamepadAxis(pad, SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > StickThreshold) bits |= 1 << (int)JoypadButton.L2;
-            if (SDL_GetGamepadAxis(pad, SDL_GamepadAxis.SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > StickThreshold) bits |= 1 << (int)JoypadButton.R2;
-
-            _buttons[port] |= bits;
-        }
-    }
+    public void Poll() => Mapper.PollGame(this);
 
     public short GetState(uint port, uint device, uint index, uint id)
     {
-        if (port >= MaxPlayers)
+        if (port >= ArcadeControls.MaxPlayers)
             return 0;
         return device switch
         {
-            RetroDevice.Joypad when id < 16 => (short)((_buttons[port] >> (int)id) & 1),
-            RetroDevice.Analog when index == 0 && id < 2 => _leftStick[port, id],
+            RetroDevice.Joypad when id < 16 => (short)((Mapper.RetroButtons((int)port) >> (int)id) & 1),
+            RetroDevice.Analog when index == 0 && id < 2 && port < _devices.Count => id == 0 ? _devices[(int)port].Stick.X : _devices[(int)port].Stick.Y,
             _ => 0,
         };
     }
 
+    // ---- Binding capture ("press the button for…") ----
+
+    readonly HashSet<(int Device, Binding Binding)> _captureBaseline = new();
+    readonly List<(int Device, Binding Binding)> _active = new();
+
+    /// <summary>Starts listening for a new press; anything already held is ignored until released.</summary>
+    public void BeginCapture()
+    {
+        _captureBaseline.Clear();
+        CollectActive();
+        _captureBaseline.UnionWith(_active);
+        foreach (var device in _devices)
+            device.RememberRestingAxes();
+    }
+
+    /// <summary>
+    /// Returns the first key or button pressed since <see cref="BeginCapture"/>, with the index of the
+    /// device it came from (-1 for the keyboard).
+    /// </summary>
+    public bool TryCapture(out Binding binding, out int device)
+    {
+        CollectActive();
+        _captureBaseline.IntersectWith(_active); // released inputs can be captured when pressed again
+        foreach (var item in _active)
+        {
+            if (_captureBaseline.Contains(item))
+                continue;
+            (device, binding) = item;
+            return true;
+        }
+        binding = default;
+        device = -1;
+        return false;
+    }
+
+    void CollectActive()
+    {
+        _active.Clear();
+        for (var sc = 1; sc < (int)SDL_Scancode.SDL_SCANCODE_COUNT; sc++)
+            if (_keyboard[sc])
+                _active.Add((-1, Binding.Key((SDL_Scancode)sc)));
+        for (var i = 0; i < _devices.Count; i++)
+            _devices[i].CollectActive(i, _active);
+    }
+
     public void Dispose()
     {
-        foreach (var (_, pad) in _pads)
-            SDL_CloseGamepad((SDL_Gamepad*)pad);
-        _pads.Clear();
+        foreach (var device in _devices)
+            device.Close();
+        _devices.Clear();
+    }
+
+    /// <summary>One open SDL device: a gamepad (with its joystick underneath) or a plain joystick.</summary>
+    sealed class SdlDevice(SDL_JoystickID id, SDL_Gamepad* pad, SDL_Joystick* joystick, string name) : IRawDevice
+    {
+        short[] _restingAxes = [];
+
+        public SDL_JoystickID Id => id;
+        public SDL_Gamepad* Pad => pad;
+        public string Name => name;
+        public bool IsGamepad => pad != null;
+
+        public bool IsDown(Binding b) => b.Kind switch
+        {
+            BindingKind.PadButton => pad != null && SDL_GetGamepadButton(pad, (SDL_GamepadButton)b.Code),
+            BindingKind.PadAxis => pad != null && SDL_GetGamepadAxis(pad, (SDL_GamepadAxis)b.Code) * b.Direction > AxisThreshold,
+            BindingKind.JoyButton => joystick != null && SDL_GetJoystickButton(joystick, b.Code),
+            BindingKind.JoyHat => joystick != null && (SDL_GetJoystickHat(joystick, b.Code) & b.Direction) != 0,
+            BindingKind.JoyAxis => joystick != null && SDL_GetJoystickAxis(joystick, b.Code) * b.Direction > AxisThreshold,
+            _ => false,
+        };
+
+        public (short X, short Y) Stick => pad != null
+            ? (SDL_GetGamepadAxis(pad, SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFTX), SDL_GetGamepadAxis(pad, SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFTY))
+            : joystick != null && SDL_GetNumJoystickAxes(joystick) >= 2
+                ? (SDL_GetJoystickAxis(joystick, 0), SDL_GetJoystickAxis(joystick, 1))
+                : ((short)0, (short)0);
+
+        /// <summary>Some joystick axes rest at one end (e.g. pedals, DirectInput triggers); capture measures from where they rest.</summary>
+        public void RememberRestingAxes()
+        {
+            if (pad != null || joystick == null)
+                return;
+            _restingAxes = new short[Math.Max(0, SDL_GetNumJoystickAxes(joystick))];
+            for (var a = 0; a < _restingAxes.Length; a++)
+                _restingAxes[a] = SDL_GetJoystickAxis(joystick, a);
+        }
+
+        public void CollectActive(int index, List<(int, Binding)> active)
+        {
+            if (pad != null)
+            {
+                for (var b = 0; b < (int)SDL_GamepadButton.SDL_GAMEPAD_BUTTON_COUNT; b++)
+                    if (SDL_GetGamepadButton(pad, (SDL_GamepadButton)b))
+                        active.Add((index, Binding.Pad((SDL_GamepadButton)b)));
+                for (var a = 0; a < (int)SDL_GamepadAxis.SDL_GAMEPAD_AXIS_COUNT; a++)
+                {
+                    var value = SDL_GetGamepadAxis(pad, (SDL_GamepadAxis)a);
+                    if (Math.Abs((int)value) > CaptureThreshold)
+                        active.Add((index, Binding.PadAxis((SDL_GamepadAxis)a, value)));
+                }
+                return;
+            }
+            if (joystick == null)
+                return;
+            for (var b = 0; b < SDL_GetNumJoystickButtons(joystick); b++)
+                if (SDL_GetJoystickButton(joystick, b))
+                    active.Add((index, new Binding(BindingKind.JoyButton, b)));
+            for (var h = 0; h < SDL_GetNumJoystickHats(joystick); h++)
+            {
+                var hat = SDL_GetJoystickHat(joystick, h);
+                foreach (var bit in (ReadOnlySpan<int>)[Binding.HatUp, Binding.HatRight, Binding.HatDown, Binding.HatLeft])
+                    if ((hat & bit) != 0)
+                        active.Add((index, new Binding(BindingKind.JoyHat, h, bit)));
+            }
+            for (var a = 0; a < SDL_GetNumJoystickAxes(joystick); a++)
+            {
+                var value = SDL_GetJoystickAxis(joystick, a);
+                var rest = a < _restingAxes.Length ? _restingAxes[a] : (short)0;
+                if (Math.Abs(value - rest) > CaptureThreshold && Math.Abs((int)value) > AxisThreshold)
+                    active.Add((index, new Binding(BindingKind.JoyAxis, a, Math.Sign(value))));
+            }
+        }
+
+        public void Close()
+        {
+            if (pad != null)
+                SDL_CloseGamepad(pad);
+            else if (joystick != null)
+                SDL_CloseJoystick(joystick);
+        }
     }
 }

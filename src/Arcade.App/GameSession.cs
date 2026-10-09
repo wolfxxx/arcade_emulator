@@ -156,11 +156,18 @@ sealed class GameSession : IDisposable
             _audio.Configure(_host.AvInfo.Timing.SampleRate); // no-op unless the core changed rate
     }
 
-    public RectF Draw(VideoRenderer renderer, RectF area, int windowHeight, float alpha = 1) =>
-        renderer.Render(_host.LastFrame, _host.Rotation, _host.AvInfo.Geometry.AspectRatio, area, windowHeight, alpha);
+    /// <summary>Extra quarter turns clockwise to show the picture at (the cabinet or game setting), on top of the core's own rotation.</summary>
+    public int PictureRotation { get; set; }
 
-    /// <summary>Aspect ratio of the final image as shown on screen (after rotation).</summary>
-    public double DisplayAspect
+    public RectF Draw(VideoRenderer renderer, RectF area, int windowHeight, float alpha = 1)
+    {
+        // The renderer counts anticlockwise turns, like the core does.
+        var turns = (uint)((_host.Rotation + 4 - PictureRotation % 4) % 4);
+        return renderer.Render(_host.LastFrame, turns, (float)DisplayAspect, area, windowHeight, alpha);
+    }
+
+    /// <summary>Aspect ratio of the game as designed, after the core's rotation.</summary>
+    double UprightAspect
     {
         get
         {
@@ -170,6 +177,15 @@ sealed class GameSession : IDisposable
             return _host.Rotation % 2 == 1 ? (double)g.BaseHeight / g.BaseWidth : (double)g.BaseWidth / g.BaseHeight;
         }
     }
+
+    /// <summary>Aspect ratio of the final image as shown on screen (after both rotations).</summary>
+    public double DisplayAspect => PictureRotation % 2 == 1 ? 1 / UprightAspect : UprightAspect;
+
+    /// <summary>True when the game's screen is taller than wide (a vertical game), before any picture rotation.</summary>
+    public bool IsVertical => UprightAspect < 1;
+
+    /// <summary>What the core says each RetroPad button does in this game, by player port.</summary>
+    public IReadOnlyList<InputDescriptor> InputDescriptors => _host.InputDescriptors;
 
     public bool HasFrame => _host.LastFrame.Width > 0;
 

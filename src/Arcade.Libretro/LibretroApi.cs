@@ -157,6 +157,16 @@ internal unsafe struct RetroVariable
 }
 
 [StructLayout(LayoutKind.Sequential)]
+internal unsafe struct RetroInputDescriptor
+{
+    public uint Port;
+    public uint Device;
+    public uint Index;
+    public uint Id;
+    public byte* Description;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal unsafe struct RetroMessage
 {
     public byte* Msg;

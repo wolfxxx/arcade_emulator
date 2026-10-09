@@ -1,3 +1,4 @@
+using Arcade.App.Controls;
 using Arcade.App.Ui;
 using Arcade.Library;
 using SDL;
@@ -10,8 +11,12 @@ namespace Arcade.App.Browser;
 /// </summary>
 sealed class BrowserScene : Scene
 {
+    /// <summary>In cabinet mode, holding Back this long opens the operator menu.</summary>
+    const float OperatorHoldSeconds = 5f;
+
     readonly GameListModel _model = new();
     Menu? _menu;
+    ControlsEditor? _controls;
     bool _searching;
     string _search = "";
     float _tabOffset;
@@ -94,11 +99,28 @@ sealed class BrowserScene : Scene
             return;
         }
 
+        if (_controls != null)
+        {
+            _controls.Update(App.UiInput.Actions, dt);
+            if (!_controls.IsOpen)
+                _controls = null;
+            return;
+        }
+
         if (_menu != null)
         {
             _menu.Update(App.UiInput.Actions, dt);
             if (!_menu.IsOpen)
-                _menu = null;
+                _menu = null; // an item that opened another menu (or the controls) has replaced it already
+            return;
+        }
+
+        if (App.Kiosk && App.UiInput.HeldFor(UiAction.Back) >= OperatorHoldSeconds)
+        {
+            App.OperatorUnlocked = true;
+            App.UiInput.SuppressHeld();
+            App.ShowMessage("Operator menu: cabinet mode is off until the app restarts");
+            OpenOptions();
             return;
         }
 
@@ -139,7 +161,7 @@ sealed class BrowserScene : Scene
             case UiAction.Back:
                 if (_model.Search.Length > 0)
                     _model.SetSearch(_search = "");
-                else
+                else if (!App.Kiosk)
                     OpenQuitMenu();
                 break;
         }
@@ -218,13 +240,13 @@ sealed class BrowserScene : Scene
 
     public override void OnMouseWheel(float delta)
     {
-        if (_menu != null || _searching) return;
+        if (_menu != null || _controls != null || _searching) return;
         _model.Move(delta > 0 ? -3 : 3);
     }
 
     public override void OnMouseButton(float x, float y, int clicks)
     {
-        if (_menu != null || _searching || !_listArea.Contains(x, y) || _rowHeight <= 0)
+        if (_menu != null || _controls != null || _searching || !_listArea.Contains(x, y) || _rowHeight <= 0)
             return;
         var row = (int)((y - _listArea.Y) / _rowHeight + Math.Max(_scroll, 0));
         if (row < 0 || row >= _model.Visible.Count)
@@ -274,18 +296,25 @@ sealed class BrowserScene : Scene
                 Hint = "Which emulator core plays this game",
             });
         }
+        if (App.Kiosk)
+        {
+            // Cabinet mode: players only get what changes the list, not the setup.
+            items.RemoveAll(i => i.Label == "Run with");
+            items.Add(new MenuItem { Label = "Search…", OnAccept = StartSearch });
+            items.Add(SortItem(sorts));
+            items.Add(ClonesItem());
+            _menu = new Menu("Options", items) { Subtitle = game?.Title };
+            return;
+        }
         items.Add(new MenuItem { Label = "Search…", OnAccept = StartSearch, Hint = $"Shortcut: {App.UiInput.Label(UiAction.Search)}" });
+        items.Add(SortItem(sorts));
+        items.Add(ClonesItem());
         items.Add(new MenuItem
         {
-            Label = "Sort by", Choices = sorts.Select(SortName).ToList(), Choice = Array.IndexOf(sorts, _model.Sort),
-            OnChoice = i => { _model.SetSort(sorts[i]); App.Settings.Sort = sorts[i]; App.Settings.Save(App.SettingsPath); },
+            Label = "Controls…", OnAccept = () => OpenControls(game),
+            Hint = "Keys, pads and arcade sticks for each player, hotkeys" + (game != null ? ", and this game's button layout" : ""),
         });
-        items.Add(new MenuItem
-        {
-            Label = "Show clones", Choices = ["Off", "On"], Choice = _model.ShowClones ? 1 : 0,
-            OnChoice = i => { _model.SetShowClones(i == 1); App.Settings.ShowClones = i == 1; App.Settings.Save(App.SettingsPath); },
-            Hint = "Alternative versions of a game (other regions, revisions, bootlegs)",
-        });
+        items.Add(new MenuItem { Label = "Cabinet setup…", OnAccept = OpenCabinet, Hint = "Screen rotation, vertical games, free play, cabinet mode" });
         if (themes.Count > 0)
             items.Add(new MenuItem
             {
@@ -310,6 +339,72 @@ sealed class BrowserScene : Scene
         items.Add(new MenuItem { Label = "Quit", OnAccept = App.Quit });
 
         _menu = new Menu("Options", items) { Subtitle = game != null ? game.Title : null };
+    }
+
+    MenuItem SortItem(SortOrder[] sorts) => new()
+    {
+        Label = "Sort by", Choices = sorts.Select(SortName).ToList(), Choice = Array.IndexOf(sorts, _model.Sort),
+        OnChoice = i => { _model.SetSort(sorts[i]); App.Settings.Sort = sorts[i]; App.Settings.Save(App.SettingsPath); },
+    };
+
+    MenuItem ClonesItem() => new()
+    {
+        Label = "Show clones", Choices = ["Off", "On"], Choice = _model.ShowClones ? 1 : 0,
+        OnChoice = i => { _model.SetShowClones(i == 1); App.Settings.ShowClones = i == 1; App.Settings.Save(App.SettingsPath); },
+        Hint = "Alternative versions of a game (other regions, revisions, bootlegs)",
+    };
+
+    void OpenControls(LibraryGame? game)
+    {
+        var context = game == null ? null
+            : new ControlsGame(game.SetName, game.Title, [], game.Orientation == Orientation.Vertical);
+        _controls = new ControlsEditor(App, context);
+    }
+
+    /// <summary>Settings for a cabinet: how the screen is mounted, vertical games, free play and cabinet mode.</summary>
+    void OpenCabinet()
+    {
+        var settings = App.Settings;
+        void Save() => settings.Save(App.SettingsPath);
+        int[] verticalTurns = [0, 1, 3];
+        _menu = new Menu("Cabinet setup",
+        [
+            new MenuItem
+            {
+                Label = "Screen", Choices = ["Normal", "Turned right", "Upside down", "Turned left"], Choice = App.ScreenTurns,
+                OnChoice = i => { settings.ScreenRotation = i; Save(); },
+                Hint = "For a monitor mounted on its side: turns everything, menus included",
+            },
+            new MenuItem
+            {
+                Label = "Vertical games", Choices = ["Upright", "Turned right", "Turned left"],
+                Choice = Math.Max(0, Array.IndexOf(verticalTurns, settings.VerticalGameRotation)),
+                OnChoice = i => { settings.VerticalGameRotation = verticalTurns[i]; Save(); },
+                Hint = "Turn vertical games to fill the screen (each game can override this)",
+            },
+            new MenuItem
+            {
+                Label = "Stick turns with picture", Choices = ["Off", "On"], Choice = settings.RotateControls ? 1 : 0,
+                OnChoice = i => { settings.RotateControls = i == 1; Save(); },
+                Hint = "On: up on the stick is up on screen. Off: for a monitor you turn by hand",
+            },
+            new MenuItem
+            {
+                Label = "Free play", Choices = ["Off", "On"], Choice = settings.FreePlay ? 1 : 0,
+                OnChoice = i => { settings.FreePlay = i == 1; Save(); },
+                Hint = "Start inserts a coin by itself",
+            },
+            new MenuItem
+            {
+                Label = "Cabinet mode", Choices = ["Off", "On"], Choice = settings.Kiosk ? 1 : 0,
+                OnChoice = i => { settings.Kiosk = i == 1; Save(); },
+                Hint = $"Fullscreen, no settings or Quit for players. Operator: hold {App.UiInput.Label(UiAction.Back)} for {OperatorHoldSeconds:0} s",
+            },
+            new MenuItem { Label = "Done", OnAccept = OpenOptions },
+        ])
+        {
+            OnCancel = OpenOptions,
+        };
     }
 
     static string SortName(SortOrder sort) => sort switch
@@ -343,7 +438,7 @@ sealed class BrowserScene : Scene
 
     public override void Draw(float dt)
     {
-        var (w, h) = App.Window.PixelSize;
+        var (w, h) = App.ScreenSize;
         var r = App.Ui;
         var t = App.Theme;
         r.Begin(w, h);
@@ -361,11 +456,22 @@ sealed class BrowserScene : Scene
         }
         else
         {
-            var listW = body.W * 0.44f;
             var gap = r.S(48);
-            var listOnLeft = !t.File.ListSide.Equals("right", StringComparison.OrdinalIgnoreCase);
-            var list = new RectF(listOnLeft ? body.X : body.Right - listW, body.Y, listW, body.H);
-            var preview = new RectF(listOnLeft ? list.Right + gap : body.X, body.Y, body.W - listW - gap, body.H);
+            RectF list, preview;
+            if (h > w * 1.1f)
+            {
+                // Portrait (a monitor on its side): preview on top, list below.
+                var previewH = body.H * 0.5f;
+                preview = new RectF(body.X, body.Y, body.W, previewH);
+                list = new RectF(body.X, preview.Bottom + gap, body.W, body.H - previewH - gap);
+            }
+            else
+            {
+                var listW = body.W * 0.44f;
+                var listOnLeft = !t.File.ListSide.Equals("right", StringComparison.OrdinalIgnoreCase);
+                list = new RectF(listOnLeft ? body.X : body.Right - listW, body.Y, listW, body.H);
+                preview = new RectF(listOnLeft ? list.Right + gap : body.X, body.Y, body.W - listW - gap, body.H);
+            }
             DrawList(r, t, list, dt);
             DrawPreview(r, t, preview);
         }
@@ -373,7 +479,17 @@ sealed class BrowserScene : Scene
 
         if (_launchPending != null)
             DrawLoading(r, t, w, h);
-        _menu?.Draw(r, t, App.UiInput, dt);
+        if (_controls != null)
+            _controls.Draw(r, t, App.UiInput, dt);
+        else
+            _menu?.Draw(r, t, App.UiInput, dt);
+        if (App.Kiosk && App.UiInput.HeldFor(UiAction.Back) is var held and > 1f && _menu == null && _controls == null)
+        {
+            var progress = Math.Clamp((held - 1f) / (OperatorHoldSeconds - 1f), 0, 1);
+            var bar = new RectF(w / 2f - r.S(200), r.S(24), r.S(400), r.S(10));
+            r.Fill(bar, t.PanelBorder, r.S(5));
+            r.Fill(bar with { W = bar.W * progress }, t.Warning, r.S(5));
+        }
         r.End();
     }
 
@@ -705,6 +821,8 @@ sealed class BrowserScene : Scene
         {
             if (action == UiAction.Search && input.LastDevice == InputDevice.Gamepad)
                 continue;
+            if (action == UiAction.Back && App.Kiosk && _model.Search.Length == 0 && !_searching)
+                continue; // cabinet mode: there is no Quit
             var key = action == UiAction.PrevTab ? $"{input.Label(UiAction.PrevTab)}/{input.Label(UiAction.NextTab)}" : input.Label(action);
             var keySize = UiRenderer.Measure(font, key);
             var chip = new RectF(x, area.Y + (area.H - r.S(40)) / 2, keySize.X + r.S(24), r.S(40));

@@ -29,4 +29,7 @@ public sealed record CoreHostOptions
     public IReadOnlyDictionary<string, string> OptionOverrides { get; init; } = new Dictionary<string, string>();
 }
 
+/// <summary>What a control does in the loaded game, as the core describes it (SET_INPUT_DESCRIPTORS), e.g. "Weak Punch".</summary>
+public sealed record InputDescriptor(uint Port, uint Device, uint Index, uint Id, string Description);
+
 public sealed record CoreInfo(string Name, string Version, string ValidExtensions, bool NeedFullPath, bool BlockExtract);

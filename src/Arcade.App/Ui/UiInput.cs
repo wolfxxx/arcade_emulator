@@ -1,3 +1,4 @@
+using Arcade.App.Controls;
 using SDL;
 using static SDL.SDL3;
 
@@ -24,35 +25,33 @@ sealed unsafe class UiInput
     const float RepeatInterval = 0.075f;
     const float FastInterval = 0.03f;
     const float FastAfter = 1.6f;
-    const short StickThreshold = 20000;
 
+    // Keys that work in menus whatever the game controls are. Everything else comes from player 1's
+    // controls and every pad (see ActionControls), so a cabinet's own buttons drive the menus.
     static readonly (SDL_Scancode Key, UiAction Action)[] Keys =
     [
         (SDL_Scancode.SDL_SCANCODE_UP, UiAction.Up), (SDL_Scancode.SDL_SCANCODE_DOWN, UiAction.Down),
         (SDL_Scancode.SDL_SCANCODE_LEFT, UiAction.Left), (SDL_Scancode.SDL_SCANCODE_RIGHT, UiAction.Right),
         (SDL_Scancode.SDL_SCANCODE_RETURN, UiAction.Accept), (SDL_Scancode.SDL_SCANCODE_KP_ENTER, UiAction.Accept),
-        (SDL_Scancode.SDL_SCANCODE_Z, UiAction.Accept), (SDL_Scancode.SDL_SCANCODE_LCTRL, UiAction.Accept),
-        (SDL_Scancode.SDL_SCANCODE_1, UiAction.Accept), (SDL_Scancode.SDL_SCANCODE_SPACE, UiAction.Accept),
         (SDL_Scancode.SDL_SCANCODE_ESCAPE, UiAction.Back), (SDL_Scancode.SDL_SCANCODE_BACKSPACE, UiAction.Back),
-        (SDL_Scancode.SDL_SCANCODE_X, UiAction.Back), (SDL_Scancode.SDL_SCANCODE_LALT, UiAction.Back),
-        (SDL_Scancode.SDL_SCANCODE_TAB, UiAction.Options), (SDL_Scancode.SDL_SCANCODE_S, UiAction.Options),
-        (SDL_Scancode.SDL_SCANCODE_LSHIFT, UiAction.Options),
-        (SDL_Scancode.SDL_SCANCODE_F, UiAction.Favorite), (SDL_Scancode.SDL_SCANCODE_A, UiAction.Favorite),
+        (SDL_Scancode.SDL_SCANCODE_TAB, UiAction.Options),
+        (SDL_Scancode.SDL_SCANCODE_F, UiAction.Favorite),
         (SDL_Scancode.SDL_SCANCODE_PAGEUP, UiAction.PageUp), (SDL_Scancode.SDL_SCANCODE_PAGEDOWN, UiAction.PageDown),
         (SDL_Scancode.SDL_SCANCODE_HOME, UiAction.Home), (SDL_Scancode.SDL_SCANCODE_END, UiAction.End),
-        (SDL_Scancode.SDL_SCANCODE_Q, UiAction.PrevTab), (SDL_Scancode.SDL_SCANCODE_W, UiAction.NextTab),
         (SDL_Scancode.SDL_SCANCODE_SLASH, UiAction.Search), (SDL_Scancode.SDL_SCANCODE_F3, UiAction.Search),
     ];
 
-    static readonly (SDL_GamepadButton Button, UiAction Action)[] PadButtons =
+    /// <summary>Which panel controls perform each menu action (the first one is shown in on-screen hints).</summary>
+    public static readonly (UiAction Action, ArcadeControl[] Controls)[] ActionControls =
     [
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_UP, UiAction.Up), (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_DOWN, UiAction.Down),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_LEFT, UiAction.Left), (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_DPAD_RIGHT, UiAction.Right),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_SOUTH, UiAction.Accept), (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_START, UiAction.Accept),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_EAST, UiAction.Back),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_NORTH, UiAction.Options), (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_BACK, UiAction.Options),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_WEST, UiAction.Favorite),
-        (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, UiAction.PrevTab), (SDL_GamepadButton.SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, UiAction.NextTab),
+        (UiAction.Up, [ArcadeControl.Up]), (UiAction.Down, [ArcadeControl.Down]),
+        (UiAction.Left, [ArcadeControl.Left]), (UiAction.Right, [ArcadeControl.Right]),
+        (UiAction.Accept, [ArcadeControl.Button1, ArcadeControl.Start]),
+        (UiAction.Back, [ArcadeControl.Button2]),
+        (UiAction.Favorite, [ArcadeControl.Button3]),
+        (UiAction.Options, [ArcadeControl.Button4, ArcadeControl.Coin]),
+        (UiAction.PrevTab, [ArcadeControl.Button5]), (UiAction.NextTab, [ArcadeControl.Button6]),
+        (UiAction.PageUp, [ArcadeControl.Button7]), (UiAction.PageDown, [ArcadeControl.Button8]),
     ];
 
     // Only movement repeats; repeating Accept or Back would open and close things by accident.
@@ -85,8 +84,11 @@ sealed unsafe class UiInput
 
     public void MarkActivity() => IdleSeconds = 0;
 
-    /// <param name="pads">Open gamepads to read; the game input manager owns them.</param>
-    public void Update(float dt, IEnumerable<nint> pads, bool keyboardEnabled = true)
+    /// <summary>How long an action's button has been held down (0 when released).</summary>
+    public float HeldFor(UiAction action) => _held[(int)action] ? _heldFor[(int)action] : 0;
+
+    /// <param name="mapper">Game controls, already read for this frame.</param>
+    public void Update(float dt, ControlMapper mapper, bool keyboardEnabled = true)
     {
         _actions.Clear();
         IdleSeconds += dt;
@@ -103,21 +105,10 @@ sealed unsafe class UiInput
                 }
         }
 
-        foreach (var handle in pads)
-        {
-            var pad = (SDL_Gamepad*)handle;
-            foreach (var (button, action) in PadButtons)
-                if (SDL_GetGamepadButton(pad, button))
-                    Press(now, action, InputDevice.Gamepad);
-            var x = SDL_GetGamepadAxis(pad, SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFTX);
-            var y = SDL_GetGamepadAxis(pad, SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFTY);
-            if (y < -StickThreshold) Press(now, UiAction.Up, InputDevice.Gamepad);
-            if (y > StickThreshold) Press(now, UiAction.Down, InputDevice.Gamepad);
-            if (x < -StickThreshold) Press(now, UiAction.Left, InputDevice.Gamepad);
-            if (x > StickThreshold) Press(now, UiAction.Right, InputDevice.Gamepad);
-            if (SDL_GetGamepadAxis(pad, SDL_GamepadAxis.SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > StickThreshold) Press(now, UiAction.PageUp, InputDevice.Gamepad);
-            if (SDL_GetGamepadAxis(pad, SDL_GamepadAxis.SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > StickThreshold) Press(now, UiAction.PageDown, InputDevice.Gamepad);
-        }
+        foreach (var (action, controls) in ActionControls)
+            foreach (var control in controls)
+                if (mapper.AnyHeld(control, out var fromDevice))
+                    Press(now, action, fromDevice ? InputDevice.Gamepad : InputDevice.Keyboard);
 
         if (_suppressUntilReleased)
         {
@@ -171,29 +162,32 @@ sealed unsafe class UiInput
             LastDevice = device;
     }
 
+    /// <summary>
+    /// Finds the on-screen name of the key (keyboard = true) or pad button bound to a control, so
+    /// hints follow the player's own layout. Set by the app.
+    /// </summary>
+    public Func<ArcadeControl, bool, string?>? BindingLabel { get; set; }
+
     /// <summary>On-screen name of the key or button for an action, matching the last device used.</summary>
-    public string Label(UiAction action) => LastDevice == InputDevice.Gamepad
-        ? action switch
-        {
-            UiAction.Accept => "Ⓐ",
-            UiAction.Back => "Ⓑ",
-            UiAction.Options => "Ⓨ",
-            UiAction.Favorite => "Ⓧ",
-            UiAction.PrevTab => "LB",
-            UiAction.NextTab => "RB",
-            UiAction.PageUp or UiAction.PageDown => "LT/RT",
-            _ => action.ToString(),
-        }
-        : action switch
+    public string Label(UiAction action)
+    {
+        var keyboard = LastDevice == InputDevice.Keyboard;
+        // Fixed keys first on the keyboard (Enter, Esc, Tab…), since they're what people expect to read.
+        var fixedKey = action switch
         {
             UiAction.Accept => "Enter",
             UiAction.Back => "Esc",
             UiAction.Options => "Tab",
             UiAction.Favorite => "F",
-            UiAction.PrevTab => "Q",
-            UiAction.NextTab => "W",
             UiAction.Search => "/",
             UiAction.PageUp or UiAction.PageDown => "PgUp/PgDn",
-            _ => action.ToString(),
+            _ => null,
         };
+        if (keyboard && fixedKey != null)
+            return fixedKey;
+        foreach (var (a, controls) in ActionControls)
+            if (a == action && BindingLabel?.Invoke(controls[0], keyboard) is { } label)
+                return label;
+        return fixedKey ?? action.ToString();
+    }
 }

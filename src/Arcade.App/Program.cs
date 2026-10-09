@@ -7,6 +7,7 @@ const string Usage = """
     Usage: Arcade.App                      open the game list
            Arcade.App <rom.zip | set name> play one game directly
     Options: --core fbneo|mame2003_plus|<path.dll>   --fullscreen   --windowed   --verbose
+             --no-kiosk   start normally even if cabinet mode is on
 
     Library:
       scan [folder ...]           add ROM folders (default: roms) and check every zip
@@ -19,12 +20,13 @@ const string Usage = """
 
     Game list: arrows move · Enter play · F favourite · Tab options · / search
                Q/W category · ←/→ jump letter · Esc quit
-    In game:   arrows move · Z X A S Q W (or Ctrl Alt Space Shift) buttons 1-6
-               5 coin · 1 start · 6/2 coin/start player 2
+    In game:   arrows move · Z X A S Q W E D (or Ctrl Alt Space Shift) buttons 1-8
+               5 coin · 1 start · player 2: R F G H move, I O K L buttons, 6 coin, 2 start
                Esc pause menu · F2 save state · F4 load state · F3 reset · F12 screenshot
                F11 or Alt+Enter fullscreen
-    Pads:      any XInput/PlayStation/Switch controller. In game: Back = coin, Start = start,
-               Guide or hold Back+Start for the pause menu
+    Pads:      any XInput/PlayStation/Switch controller, or a USB arcade stick/encoder.
+               Back = coin, Start = start; Guide, or hold Back + Start, for the pause menu
+    Controls:  all of these can be changed in Options > Controls (saved in controls.json)
     """;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -42,6 +44,7 @@ if (args.Length > 0 && LibraryCommands.Names.Contains(args[0]) && !File.Exists(a
 string? rom = null, core = null, script = null;
 bool? fullscreen = null;
 var verbose = false;
+var noKiosk = false;
 (int, int)? offscreen = null;
 for (var i = 0; i < args.Length; i++)
 {
@@ -51,6 +54,7 @@ for (var i = 0; i < args.Length; i++)
         case "--fullscreen": fullscreen = true; break;
         case "--windowed": fullscreen = false; break;
         case "--verbose": verbose = true; break;
+        case "--no-kiosk": noKiosk = true; break;
         // For automated checks: drive the app with a script, optionally rendering hidden at a fixed size.
         case "--script": script = args[++i]; break;
         case "--offscreen":
@@ -89,7 +93,7 @@ if (rom != null && !File.Exists(rom))
 
 try
 {
-    return new ArcadeApp(new AppOptions(rom, core, fullscreen, verbose, script, offscreen)).Run();
+    return new ArcadeApp(new AppOptions(rom, core, fullscreen, verbose, script, offscreen, noKiosk)).Run();
 }
 catch (Exception ex) when (ex is RomSetException or InvalidOperationException or DllNotFoundException or EntryPointNotFoundException)
 {
