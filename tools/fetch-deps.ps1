@@ -3,7 +3,9 @@
 # ROMs: only titles the rights holders released for free non-commercial use (https://www.mamedev.org/roms/).
 # Also FBNeo's hiscore.dat (keeps high score tables), with -Cheats the FBNeo cheat collection, and with
 # -Shaders libretro's GLSL shader collection (offered as picture styles; each shader has its own licence).
-param([switch]$Force, [switch]$Cheats, [switch]$Shaders)
+# -Bezels fetches The Bezel Project's artwork for every game in the library (run scan first; it runs
+# the app's "bezels" command, so it builds the app).
+param([switch]$Force, [switch]$Cheats, [switch]$Shaders, [switch]$Bezels)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -78,4 +80,9 @@ if ($Shaders) {
     New-Item -ItemType Directory -Force $shaderDir | Out-Null
     Copy-Item (Join-Path $unpacked 'glsl-shaders-master\*') $shaderDir -Recurse -Force
     Write-Host "      $((Get-ChildItem $shaderDir -Recurse -Filter *.glslp).Count) presets in shaders\libretro"
+}
+if ($Bezels) {
+    # The app knows the library's games and their parents, so it does the downloading.
+    dotnet run --project (Join-Path $root 'src\Arcade.App') -- bezels
+    if ($LASTEXITCODE -ne 0) { Write-Warning "Some bezels couldn't be downloaded (see above)." }
 }
