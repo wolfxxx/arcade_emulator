@@ -16,6 +16,22 @@ sealed class Settings
     public int AttractMinutes { get; set; } = 3;
     /// <summary>Seconds each game plays in attract mode.</summary>
     public int AttractSecondsPerGame { get; set; } = 45;
+    // ---- Cabinet ----
+
+    /// <summary>Quarter turns clockwise to turn the whole picture (menus too), for a monitor mounted on its side.</summary>
+    public int ScreenRotation { get; set; }
+    /// <summary>Quarter turns clockwise to show vertical games at by default (0 = upright, with black bars).</summary>
+    public int VerticalGameRotation { get; set; }
+    /// <summary>When a game's picture is turned, turn the stick with it so up on the stick is up on screen.</summary>
+    public bool RotateControls { get; set; } = true;
+    /// <summary>Pressing Start inserts a coin first.</summary>
+    public bool FreePlay { get; set; }
+    /// <summary>
+    /// Cabinet mode: always fullscreen with no mouse pointer; the game list hides settings and Quit.
+    /// Holding Back for a few seconds in the game list opens the operator menu.
+    /// </summary>
+    public bool Kiosk { get; set; }
+
     public string? LastTab { get; set; }
     public string? LastGame { get; set; }
 

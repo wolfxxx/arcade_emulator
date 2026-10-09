@@ -4,6 +4,7 @@ using System.Runtime;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Arcade.App.Browser;
+using Arcade.App.Controls;
 using Arcade.App.Ui;
 using Arcade.Libretro;
 using Arcade.Library;
@@ -15,7 +16,7 @@ namespace Arcade.App;
 
 /// <param name="RomPath">Run this game directly (quitting it exits the app); null opens the game list.</param>
 /// <param name="Offscreen">Render hidden at this size (for automated checks with <paramref name="Script"/>).</param>
-sealed record AppOptions(string? RomPath, string? Core, bool? Fullscreen, bool Verbose, string? Script = null, (int W, int H)? Offscreen = null);
+sealed record AppOptions(string? RomPath, string? Core, bool? Fullscreen, bool Verbose, string? Script = null, (int W, int H)? Offscreen = null, bool NoKiosk = false);
 
 /// <summary>
 /// The application shell: one window, renderer, audio device and input system for the whole
@@ -43,6 +44,8 @@ sealed unsafe class ArcadeApp : IDisposable
     public Theme Theme { get; private set; } = null!;
     public InputManager GameInput { get; private set; } = null!;
     public UiInput UiInput { get; } = new();
+    public ControlConfig Controls { get; }
+    ScreenRotator? _rotator;
     public AudioOutput Audio { get; private set; } = null!;
     public ArtworkLocator Artwork { get; }
 
@@ -53,6 +56,13 @@ sealed unsafe class ArcadeApp : IDisposable
     public bool ReadOnly => Options.Offscreen != null;
 
     public string SettingsPath => Path.Combine(Paths.Root, "settings.json");
+    public string ControlsPath => Path.Combine(Paths.Root, "controls.json");
+
+    /// <summary>Cabinet mode: settings and Quit are hidden from players (see <see cref="Settings.Kiosk"/>).</summary>
+    public bool Kiosk => Settings.Kiosk && !Options.NoKiosk && !OperatorUnlocked;
+
+    /// <summary>Set by the operator hold in the game list; cabinet mode is lifted until the app restarts.</summary>
+    public bool OperatorUnlocked { get; set; }
     public string ThemesDir => Path.Combine(Paths.Root, "themes");
 
     // ---- Background library scan ----
@@ -68,6 +78,7 @@ sealed unsafe class ArcadeApp : IDisposable
         Options = options;
         Settings = Settings.Load(SettingsPath);
         Settings.ReadOnly = options.Offscreen != null;
+        Controls = ControlConfig.Load(ControlsPath, message => Console.Error.WriteLine(message));
         Catalog = new CoreCatalog(Paths);
         Artwork = new ArtworkLocator(Paths.Artwork);
     }
@@ -93,8 +104,9 @@ sealed unsafe class ArcadeApp : IDisposable
         _ = Task.Run(() => Catalog.LibraryCores);
 
         Library = new GameLibrary(Paths.LibraryDb);
-        GameInput = new InputManager();
+        GameInput = new InputManager(Controls);
         GameInput.Message += ShowMessage;
+        UiInput.BindingLabel = BindingLabel;
         Audio = new AudioOutput();
         if (Options.Offscreen != null)
             Audio.Muted = true;
@@ -104,12 +116,18 @@ sealed unsafe class ArcadeApp : IDisposable
         if (Options.RomPath != null)
         {
             direct = GameSession.Start(Paths, Catalog, Options.RomPath, Options.Core, GameInput, Audio, Options.Verbose);
+            ConfigureGame(direct);
             if (Options.Offscreen == null && Library.Find(direct.SetName) != null)
                 Library.RecordPlay(direct.SetName, DateTime.Now);
         }
 
-        var fullscreen = Options.Fullscreen ?? Settings.StartFullscreen;
-        Window = new AppWindow(direct?.Title ?? "Arcade", direct?.DisplayAspect ?? 16.0 / 9, fullscreen, Options.Offscreen);
+        var fullscreen = Options.Fullscreen ?? (Settings.StartFullscreen || Kiosk);
+        var aspect = direct?.DisplayAspect ?? 16.0 / 9;
+        if (Settings.ScreenRotation % 2 == 1)
+            aspect = 1 / aspect;
+        Window = new AppWindow(direct?.Title ?? "Arcade", aspect, fullscreen, Options.Offscreen);
+        if (Kiosk && !Window.Offscreen)
+            SDL_HideCursor();
         Ui = new UiRenderer(Window.Gl);
         Video = new VideoRenderer(Window.Gl);
         Images = new ImageCache(Window.Gl);
@@ -136,14 +154,27 @@ sealed unsafe class ArcadeApp : IDisposable
             last = now;
             var dt = (float)Math.Min(elapsed, 0.1);
 
-            UiInput.Update(dt, GameInput.Pads, keyboardEnabled: !_scene!.CapturesText);
+            var keyboard = !_scene!.CapturesText;
+            GameInput.Mapper.Update(GameInput, dt, keyboard);
+            UiInput.Update(dt, GameInput.Mapper, keyboard);
             _script?.Update(dt);
             _scene.Update(dt, elapsed);
             PollBackgroundWork();
             Images.Pump();
 
-            var (w, h) = Window.PixelSize;
-            Window.BeginFrame();
+            var (ww, wh) = Window.PixelSize;
+            var (w, h) = ScreenSize;
+            var turns = ScreenTurns;
+            var rotate = turns != 0 && w > 0 && h > 0;
+            if (rotate)
+            {
+                _rotator ??= new ScreenRotator(Window.Gl);
+                _rotator.Begin(w, h);
+            }
+            else
+            {
+                Window.BeginFrame();
+            }
             Window.Gl.Viewport(0, 0, (uint)w, (uint)h);
             Window.Gl.ClearColor(0, 0, 0, 1);
             Window.Gl.Clear(ClearBufferMask.ColorBufferBit);
@@ -151,6 +182,11 @@ sealed unsafe class ArcadeApp : IDisposable
             {
                 _scene.Draw(dt);
                 DrawToasts(w, h);
+            }
+            if (rotate)
+            {
+                Window.BeginFrame();
+                _rotator!.Present(ww, wh, turns);
             }
             TakePendingScreenshot();
             Window.Swap();
@@ -173,6 +209,19 @@ sealed unsafe class ArcadeApp : IDisposable
     }
 
     public void SwitchTo(Scene scene) => _next = scene;
+
+    /// <summary>Quarter turns clockwise the whole picture is shown at (cabinet screen rotation).</summary>
+    public int ScreenTurns => ((Settings.ScreenRotation % 4) + 4) % 4;
+
+    /// <summary>Size of the upright picture that scenes draw: the window, swapped when the screen is on its side.</summary>
+    public (int Width, int Height) ScreenSize
+    {
+        get
+        {
+            var (w, h) = Window.PixelSize;
+            return ScreenRotator.LogicalSize(w, h, ScreenTurns);
+        }
+    }
 
     public void OnScriptText(string text) => _scene?.OnTextInput(text);
 
@@ -199,6 +248,7 @@ sealed unsafe class ArcadeApp : IDisposable
                 mode == GameMode.Attract ? NullInput.Instance : GameInput, Audio, Options.Verbose);
             if (mode == GameMode.Attract || ReadOnly)
                 Audio.Muted = true;
+            ConfigureGame(session);
             if (mode == GameMode.Play && !ReadOnly)
                 Library.RecordPlay(game.SetName, DateTime.Now);
             SwitchTo(new GameScene(this, session, mode, game));
@@ -220,6 +270,40 @@ sealed unsafe class ArcadeApp : IDisposable
             return;
         }
         SwitchTo(new BrowserScene(this, selectSet));
+    }
+
+    // ---- Controls and cabinet ----
+
+    /// <summary>Applies a game's own setup (button layout, picture rotation) and the cabinet settings to the controls.</summary>
+    public void ConfigureGame(GameSession session)
+    {
+        var setup = Controls.Game(session.SetName);
+        session.PictureRotation = setup.Rotation ?? (session.IsVertical ? Settings.VerticalGameRotation : 0);
+        var mapper = GameInput.Mapper;
+        mapper.Game = setup;
+        mapper.PictureRotation = session.PictureRotation;
+        mapper.RotateControls = Settings.RotateControls;
+        mapper.FreePlay = Settings.FreePlay;
+    }
+
+    public void SaveControls()
+    {
+        if (!ReadOnly)
+            Controls.Save(ControlsPath);
+    }
+
+    /// <summary>On-screen name of player 1's key, or the pad button, for a control (menu hints).</summary>
+    string? BindingLabel(ArcadeControl control, bool keyboard)
+    {
+        IEnumerable<Binding> bindings = keyboard
+            ? Controls.PlayerKeys(0).Get(control)
+            : GameInput.Devices.Count > 0
+                ? Controls.DeviceMap(GameInput.Devices[0].Name, GameInput.Devices[0].IsGamepad).Get(control)
+                : Controls.Gamepad.Get(control);
+        foreach (var binding in bindings)
+            if (binding.IsKeyboard == keyboard)
+                return binding.IsKeyboard ? binding.Label : binding.Label.Replace("Pad ", "");
+        return null;
     }
 
     public void ApplyTheme(string id)
@@ -249,6 +333,8 @@ sealed unsafe class ArcadeApp : IDisposable
 
     public void SavePreview(Rgba32Image image, string path)
     {
+        if (ReadOnly)
+            return;
         PngEncoder.Save(image, path);
         Images.Invalidate(path);
     }
@@ -376,11 +462,11 @@ sealed unsafe class ArcadeApp : IDisposable
                 case SDL_EventType.SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                     _quit = true;
                     break;
-                case SDL_EventType.SDL_EVENT_GAMEPAD_ADDED:
-                    GameInput.AddGamepad(e.gdevice.which);
+                case SDL_EventType.SDL_EVENT_JOYSTICK_ADDED:
+                    GameInput.AddDevice(e.jdevice.which);
                     break;
-                case SDL_EventType.SDL_EVENT_GAMEPAD_REMOVED:
-                    GameInput.RemoveGamepad(e.gdevice.which);
+                case SDL_EventType.SDL_EVENT_JOYSTICK_REMOVED:
+                    GameInput.RemoveDevice(e.jdevice.which);
                     break;
                 case SDL_EventType.SDL_EVENT_KEY_DOWN:
                     OnKey(e.key);
@@ -392,7 +478,9 @@ sealed unsafe class ArcadeApp : IDisposable
                 case SDL_EventType.SDL_EVENT_MOUSE_BUTTON_DOWN when e.button.button == SDL_BUTTON_LEFT:
                     var density = SDL_GetWindowPixelDensity(Window.Handle);
                     UiInput.MarkActivity();
-                    _scene?.OnMouseButton(e.button.x * density, e.button.y * density, e.button.clicks);
+                    var (pw, ph) = Window.PixelSize;
+                    var (mx, my) = ScreenRotator.ToLogical(e.button.x * density, e.button.y * density, pw, ph, ScreenTurns);
+                    _scene?.OnMouseButton(mx, my, e.button.clicks);
                     break;
                 case SDL_EventType.SDL_EVENT_MOUSE_WHEEL:
                     UiInput.MarkActivity();
@@ -444,6 +532,8 @@ sealed unsafe class ArcadeApp : IDisposable
 
     public void Dispose()
     {
+        _rotator?.Dispose();
+        _rotator = null;
         Images?.Dispose();
         Theme?.Dispose();
         Video?.Dispose();

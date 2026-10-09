@@ -48,6 +48,17 @@ public class HeadlessCoreTests
     }
 
     [RequiresCoreFact("fbneo", "gridlee")]
+    public void Core_names_the_game_controls()
+    {
+        using var host = LoadCore("fbneo", "gridlee");
+        Run(host, 1); // FBNeo describes its controls once the game is running
+        // The controls screen shows these next to each button.
+        var all = string.Join("; ", host.InputDescriptors.Select(d => $"{d.Port}/{d.Device}/{d.Index}/{d.Id}={d.Description}"));
+        Assert.True(host.InputDescriptors.Any(d => d.Port == 0 && d.Device == RetroDevice.Joypad && d.Id == (uint)JoypadButton.B && d.Description == "Button 1"), all);
+        Assert.True(host.InputDescriptors.Any(d => d.Port == 0 && d.Id == (uint)JoypadButton.Select), all);
+    }
+
+    [RequiresCoreFact("fbneo", "gridlee")]
     public void Save_state_round_trip_is_deterministic_with_input()
     {
         // The input script runs on its own clock so it can be rewound together with the save state.

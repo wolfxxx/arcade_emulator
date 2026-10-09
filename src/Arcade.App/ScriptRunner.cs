@@ -6,9 +6,10 @@ namespace Arcade.App;
 
 /// <summary>
 /// Drives the app from a script for automated checks, e.g.
-/// <c>--script "wait 2; down; down; shot list.png; accept; wait 3; key escape; shot pause.png; quit"</c>.
+/// <c>--script "wait 2; down; down; shot list.png; accept; wait 3; hotkey menu; shot pause.png; quit"</c>.
 /// Commands: wait &lt;seconds&gt;, any menu action (up, accept, options…), key &lt;name&gt; (a raw key
-/// press such as escape or f2), type &lt;text&gt;, shot &lt;file.png&gt;, quit.
+/// press such as f11), hotkey &lt;name&gt; (menu, savestate… as if its key were pressed in a game),
+/// type &lt;text&gt;, shot &lt;file.png&gt;, quit.
 /// </summary>
 sealed unsafe class ScriptRunner(ArcadeApp app, string script)
 {
@@ -36,6 +37,10 @@ sealed unsafe class ScriptRunner(ArcadeApp app, string script)
                     return;
                 case "quit":
                     app.Quit();
+                    return;
+                case "hotkey":
+                    app.GameInput.Mapper.Inject(Enum.Parse<Controls.Hotkey>(arg, ignoreCase: true));
+                    _wait = 0.1f;
                     return;
                 case "key":
                     PushKey(arg);

@@ -1,6 +1,7 @@
+using Arcade.App.Controls;
 using Arcade.App.Ui;
 using Arcade.Library;
-using SDL;
+using Arcade.Libretro;
 
 namespace Arcade.App;
 
@@ -12,17 +13,16 @@ enum GameMode
     Attract,
 }
 
-/// <summary>A running game, with the pause menu (Esc, P, Guide, or Back+Start held) drawn over it.</summary>
+/// <summary>A running game, with the pause menu (Esc, P, Guide, or hotkey-enable + Start) drawn over it.</summary>
 sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, LibraryGame? game = null) : Scene(app)
 {
-    const float ChordHoldSeconds = 0.6f;
-
     Menu? _menu;
-    float _chordHeld;
-    bool _guideWasHeld;
+    ControlsEditor? _controls;
     float _time;
 
-    public override bool ClockPaced => _menu == null && session.ClockPaced;
+    bool Paused => _menu != null || _controls != null;
+
+    public override bool ClockPaced => !Paused && session.ClockPaced;
 
     public override void Enter()
     {
@@ -56,23 +56,50 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
             return;
         }
 
+        if (_controls != null)
+        {
+            _controls.Update(App.UiInput.Actions, dt);
+            if (!_controls.IsOpen)
+            {
+                _controls = null;
+                OpenMenu(); // back to the pause menu it was opened from
+            }
+            return;
+        }
+
         if (_menu != null)
         {
             _menu.Update(App.UiInput.Actions, dt);
-            if (_menu is { IsOpen: false })
+            if (_menu is { IsOpen: false } && _controls == null)
                 CloseMenu();
             return;
         }
 
-        _chordHeld = App.GameInput.MenuChordHeld ? _chordHeld + dt : 0;
-        var guide = App.GameInput.GuideHeld;
-        if (_chordHeld >= ChordHoldSeconds || (guide && !_guideWasHeld))
+        foreach (var hotkey in App.GameInput.Mapper.FiredHotkeys)
         {
-            _guideWasHeld = guide;
-            OpenMenu();
-            return;
+            switch (hotkey)
+            {
+                case Hotkey.Menu:
+                    OpenMenu();
+                    return;
+                case Hotkey.SaveState:
+                    App.ShowMessage(session.SaveState());
+                    break;
+                case Hotkey.LoadState:
+                    App.ShowMessage(session.LoadState());
+                    break;
+                case Hotkey.Reset:
+                    session.Reset();
+                    App.ShowMessage("Reset");
+                    break;
+                case Hotkey.Screenshot:
+                    SaveScreenshot();
+                    break;
+                case Hotkey.ExitGame:
+                    App.ReturnToBrowser(session.SetName);
+                    return;
+            }
         }
-        _guideWasHeld = guide;
 
         session.Advance(elapsed);
         if (session.Host.ShutdownRequested)
@@ -123,36 +150,6 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
         app.ReturnToBrowser(currentSet);
     }
 
-    public override bool OnKey(SDL_KeyboardEvent key)
-    {
-        if (mode == GameMode.Attract)
-            return false;
-        if (_menu != null)
-            return false; // Esc arrives as the menu's Back action
-        switch (key.scancode)
-        {
-            case SDL_Scancode.SDL_SCANCODE_ESCAPE:
-            case SDL_Scancode.SDL_SCANCODE_P:
-            case SDL_Scancode.SDL_SCANCODE_PAUSE:
-                OpenMenu();
-                return true;
-            case SDL_Scancode.SDL_SCANCODE_F2:
-                App.ShowMessage(session.SaveState());
-                return true;
-            case SDL_Scancode.SDL_SCANCODE_F4:
-                App.ShowMessage(session.LoadState());
-                return true;
-            case SDL_Scancode.SDL_SCANCODE_F3:
-                session.Reset();
-                App.ShowMessage("Reset");
-                return true;
-            case SDL_Scancode.SDL_SCANCODE_F12:
-                SaveScreenshot();
-                return true;
-        }
-        return false;
-    }
-
     void SaveScreenshot()
     {
         var path = Path.Combine(App.Paths.Root, "screenshots", $"{session.SetName}-{DateTime.Now:yyyyMMdd-HHmmss}.png");
@@ -165,7 +162,6 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
     {
         App.Audio.Pause();
         App.UiInput.SuppressHeld();
-        _chordHeld = 0;
         var quitLabel = App.DirectLaunch ? "Quit" : "Back to game list";
         _menu = new Menu(session.Title,
         [
@@ -173,6 +169,11 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
             new MenuItem { Label = "Save state", OnAccept = () => App.ShowMessage(session.SaveState()), Hint = "Shortcut: F2" },
             new MenuItem { Label = "Load state", OnAccept = () => App.ShowMessage(session.LoadState()), Enabled = session.HasSavedState, Hint = "Shortcut: F4" },
             new MenuItem { Label = "Reset game", OnAccept = () => { session.Reset(); App.ShowMessage("Reset"); }, Hint = "Shortcut: F3" },
+            new MenuItem
+            {
+                Label = "Controls…", OnAccept = OpenControls,
+                Hint = "Change keys and buttons, this game's button layout and picture",
+            },
             new MenuItem
             {
                 Label = "Use this screen as preview", Closes = false,
@@ -192,19 +193,54 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
         ])
         {
             Subtitle = $"{session.CoreName} · {session.MeasuredFps:F1} fps",
-            SidePanel =
-            [
-                ("Move", "Arrow keys"),
-                ("Buttons 1–6", "Z X A S Q W"),
-                ("Insert coin", "5"),
-                ("Start", "1"),
-                ("Player 2", "6 coin · 2 start"),
-                ("Save · load", "F2 · F4"),
-                ("Pause menu", "Esc"),
-                ("", "Gamepad: Back = coin, Start = start,"),
-                ("", "hold Back + Start for this menu"),
-            ],
+            SidePanel = ControlsSummary(),
         };
+    }
+
+    void OpenControls()
+    {
+        _controls = new ControlsEditor(App, new ControlsGame(session.SetName, session.Title, session.InputDescriptors, session.IsVertical))
+        {
+            Changed = () => App.ConfigureGame(session),
+        };
+    }
+
+    /// <summary>Player 1's keys and pad buttons, with what each button does in this game.</summary>
+    List<(string, string)> ControlsSummary()
+    {
+        var config = App.Controls;
+        var keys = config.PlayerKeys(0);
+        var device = App.GameInput.Devices.FirstOrDefault();
+        var pad = device != null ? config.DeviceMap(device.Name, device.IsGamepad) : null;
+        string Labels(ArcadeControl control)
+        {
+            var parts = keys.Get(control).Where(b => b.IsKeyboard).Take(1).Concat(pad?.Get(control).Where(b => !b.IsKeyboard).Take(1) ?? []);
+            var text = string.Join(" · ", parts.Select(b => b.Label));
+            return text.Length == 0 ? "—" : text;
+        }
+        string Descriptor(JoypadButton id) =>
+            session.InputDescriptors.FirstOrDefault(d => d.Port == 0 && d.Device == RetroDevice.Joypad && d.Id == (uint)id)?.Description ?? "";
+
+        var moveKeys = ArcadeControls.Directions.Select(d => keys.Get(d).FirstOrDefault(b => b.IsKeyboard)).Where(b => b != default).Select(b => b.Label).ToList();
+        var move = moveKeys.Count == 4 && moveKeys.All(k => k.StartsWith("Arrow ")) ? "Arrow keys" : string.Join(" ", moveKeys);
+        var lines = new List<(string, string)> { ("Move", move + (pad != null ? " · stick" : "")) };
+        var setup = config.Game(session.SetName);
+        var hasDescriptors = session.InputDescriptors.Count > 0;
+        for (var panel = 1; panel <= ArcadeControls.ButtonCount && lines.Count < 9; panel++)
+        {
+            var gameButton = setup.GameButton(panel);
+            var name = gameButton == 0 ? "" : Descriptor(ArcadeControls.Button(gameButton).RetroButton());
+            if (hasDescriptors ? name.Length == 0 : panel > 6)
+                continue;
+            lines.Add((name.Length > 0 ? name : $"Button {panel}", Labels(ArcadeControls.Button(panel))));
+        }
+        lines.Add(("Insert coin", Labels(ArcadeControl.Coin)));
+        lines.Add(("Start", Labels(ArcadeControl.Start)));
+        var menuKeys = config.HotkeyBindings(Hotkey.Menu).Where(b => !App.GameInput.Mapper.NeedsEnable(b)).Take(2).Select(b => b.Label);
+        lines.Add(("Pause menu", string.Join(" · ", menuKeys)));
+        if (config.HotkeyEnable is [var enable, ..] && config.HotkeyBindings(Hotkey.Menu).FirstOrDefault(App.GameInput.Mapper.NeedsEnable) is var combo && combo != default)
+            lines.Add(("", $"or hold {enable.Label} + {combo.Label}"));
+        return lines;
     }
 
     void CloseMenu()
@@ -212,19 +248,36 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
         _menu = null;
         session.ResetClock();
         App.UiInput.SuppressHeld();
+        App.GameInput.Mapper.ResetHotkeys();
     }
 
     public override void Draw(float dt)
     {
-        var (w, h) = App.Window.PixelSize;
+        var (w, h) = App.ScreenSize;
         session.Draw(App.Video, new RectF(0, 0, w, h), h);
 
         var r = App.Ui;
         r.Begin(w, h);
         if (mode == GameMode.Attract)
             DrawAttractBanner(r, w, h);
-        _menu?.Draw(r, App.Theme, App.UiInput, dt);
+        else if (!Paused)
+            DrawComboHint(r, w);
+        if (_controls != null)
+            _controls.Draw(r, App.Theme, App.UiInput, dt);
+        else
+            _menu?.Draw(r, App.Theme, App.UiInput, dt);
         r.End();
+    }
+
+    /// <summary>A small bar while a hotkey-enable combination is being held, so people know to keep holding.</summary>
+    void DrawComboHint(UiRenderer r, int w)
+    {
+        var progress = App.GameInput.Mapper.ComboProgress;
+        if (progress <= 0.05f)
+            return;
+        var bar = new RectF(w / 2f - r.S(160), r.S(30), r.S(320), r.S(12));
+        r.Fill(bar.Inset(-r.S(6)), Rgba.Black.WithAlpha(0.6f), r.S(12));
+        r.Fill(bar with { W = bar.W * progress }, App.Theme.Accent, r.S(6));
     }
 
     void DrawAttractBanner(UiRenderer r, int w, int h)

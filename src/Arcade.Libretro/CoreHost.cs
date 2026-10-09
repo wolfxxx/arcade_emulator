@@ -51,6 +51,9 @@ public sealed unsafe class CoreHost : IDisposable
     public bool ShutdownRequested { get; private set; }
     public IReadOnlyDictionary<string, CoreOption> Options => _coreOptions;
 
+    /// <summary>What each control does in the loaded game, if the core said (most arcade cores do).</summary>
+    public IReadOnlyList<InputDescriptor> InputDescriptors { get; private set; } = [];
+
     CoreHost(string corePath, CoreHostOptions options)
     {
         _corePath = Path.GetFullPath(corePath);
@@ -384,8 +387,15 @@ public sealed unsafe class CoreHost : IDisposable
             case RetroEnv.GetMessageInterfaceVersion:
                 *(uint*)data = 1;
                 return true;
-            case RetroEnv.SetPerformanceLevel:
             case RetroEnv.SetInputDescriptors:
+            {
+                var list = new List<InputDescriptor>();
+                for (var d = (RetroInputDescriptor*)data; d != null && d->Description != null; d++)
+                    list.Add(new InputDescriptor(d->Port, d->Device, d->Index, d->Id, Utf8(d->Description)));
+                InputDescriptors = list;
+                return true;
+            }
+            case RetroEnv.SetPerformanceLevel:
             case RetroEnv.SetControllerInfo:
             case RetroEnv.SetSubsystemInfo:
             case RetroEnv.SetSupportAchievements:
