@@ -17,6 +17,7 @@ const string Usage = """
       set-core <set> <core|auto>  always run a game on a given core
       favorite <set> [off]        mark or unmark a favourite
       folders [--remove <folder>] show or remove library folders
+      bezels                      download bezel artwork (The Bezel Project) for games that have none
       shaders [--check] [folder]  list picture styles; --check tests each preset in a hidden window
 
     Game list: arrows move · Enter play · F favourite · Tab options · / search

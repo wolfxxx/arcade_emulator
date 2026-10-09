@@ -20,6 +20,7 @@ netplay and an installer.
 ./tools/fetch-deps.ps1     # cores (libretro buildbot), core DATs, free test ROMs (mamedev.org), hiscore.dat
 ./tools/fetch-deps.ps1 -Cheats   # optional: FBNeo's cheat collection into system/fbneo/cheats
 ./tools/fetch-deps.ps1 -Shaders  # optional: libretro's ~600 GLSL shader presets into shaders/libretro
+./tools/fetch-deps.ps1 -Bezels   # optional: The Bezel Project's artwork for the games in your library
 dotnet test                # unit tests + headless core tests
 ```
 
@@ -122,6 +123,11 @@ This game only").
   `default-vertical.png` or `default.png` cover the rest. The window is found from the transparency;
   a `.json` next to the PNG (`{"x": 240, "y": 0, "width": 1440, "height": 1080}`, in image pixels)
   sets it exactly. Bezel packs made for RetroArch (e.g. The Bezel Project's 1920×1080 PNGs) work.
+  `Arcade.App bezels` (or `fetch-deps.ps1 -Bezels`) downloads them for you: for every game in the
+  library without one it fetches The Bezel Project's bezel for the set, or else its parent's, plus the
+  project's general horizontal and vertical bezels as the defaults. Games it has nothing for use the
+  general one. Pictures are only kept if a window can be found in them, and ones you already have are
+  never replaced, so it's safe to run again after adding games.
 
 **More styles from RetroArch:** any GLSL preset (`.glslp`) in the `shaders/` folder, in any subfolder,
 appears in the Style list. `fetch-deps.ps1 -Shaders` downloads libretro's collection; 597 of its 624

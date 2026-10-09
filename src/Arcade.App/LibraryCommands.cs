@@ -10,7 +10,7 @@ sealed class LibraryCommands(AppPaths paths)
 {
     readonly CoreCatalog _catalog = new(paths);
 
-    public static readonly string[] Names = ["scan", "list", "info", "set-core", "favorite", "folders"];
+    public static readonly string[] Names = ["scan", "list", "info", "set-core", "favorite", "folders", "bezels"];
 
     public int Run(string command, string[] args)
     {
@@ -23,8 +23,26 @@ sealed class LibraryCommands(AppPaths paths)
             "set-core" when args.Length == 2 => SetCore(library, args[0], args[1]),
             "favorite" when args.Length is 1 or 2 => Favorite(library, args[0], args.Length == 1 || args[1] != "off"),
             "folders" => Folders(library, args),
+            "bezels" => Bezels(library),
             _ => Fail($"Wrong arguments for '{command}'. Run with --help for usage."),
         };
+    }
+
+    /// <summary>Downloads The Bezel Project's artwork for every playable game that has none yet.</summary>
+    int Bezels(GameLibrary library)
+    {
+        var games = library.Games();
+        if (games.Count == 0)
+            return Fail("The library is empty. Run: scan <folder>");
+        Console.WriteLine($"Looking for bezels for {games.Count} game(s) at The Bezel Project…");
+        var result = new Video.BezelDownloader(paths.Artwork)
+            .DownloadAsync(games.Select(g => (g.SetName, g.Parent)), Console.WriteLine).GetAwaiter().GetResult();
+        Console.WriteLine();
+        Console.WriteLine($"{result.Downloaded} picture(s) downloaded to {Path.Combine(paths.Artwork, "bezels")}; "
+            + $"{result.AlreadyHad} game(s) already had one; {result.NotAvailable} have none there (they use the general bezel).");
+        foreach (var problem in result.Problems)
+            Console.WriteLine("  problem: " + problem);
+        return result.Problems.Count == 0 ? 0 : 1;
     }
 
     int Scan(GameLibrary library, string[] folders)
