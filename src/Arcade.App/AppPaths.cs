@@ -13,6 +13,8 @@ sealed record AppPaths(string Root)
     public string Saves { get; init; } = Path.Combine(Root, "saves");
     public string Roms => Path.Combine(Root, "roms");
     public string Artwork => Path.Combine(Root, "artwork");
+    /// <summary>RetroArch GLSL presets (.glslp) the player added, offered as picture styles.</summary>
+    public string Shaders => Path.Combine(Root, "shaders");
     public string LibraryDb => Path.Combine(Root, "library.db");
 
     public static AppPaths Discover()

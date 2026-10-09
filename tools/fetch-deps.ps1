@@ -1,8 +1,9 @@
 # Downloads the libretro cores and the freely distributable test ROMs into the repo root.
 # Cores: libretro buildbot nightlies (FBNeo and MAME 2003-Plus are non-commercial licensed).
 # ROMs: only titles the rights holders released for free non-commercial use (https://www.mamedev.org/roms/).
-# Also FBNeo's hiscore.dat (keeps high score tables), and with -Cheats the FBNeo cheat collection.
-param([switch]$Force, [switch]$Cheats)
+# Also FBNeo's hiscore.dat (keeps high score tables), with -Cheats the FBNeo cheat collection, and with
+# -Shaders libretro's GLSL shader collection (offered as picture styles; each shader has its own licence).
+param([switch]$Force, [switch]$Cheats, [switch]$Shaders)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -63,4 +64,18 @@ if ($Cheats) {
     New-Item -ItemType Directory -Force $cheatDir | Out-Null
     Copy-Item (Join-Path $unpacked 'FBNeo-cheats-master\cheats\*') $cheatDir -Recurse -Force
     Write-Host "      $((Get-ChildItem $cheatDir).Count) cheat files in system\fbneo\cheats"
+}
+
+# libretro's GLSL shaders (about 600 presets), listed under Picture > Style. Most work as they are;
+# `Arcade.App shaders --check` tests each one.
+if ($Shaders) {
+    $shaderDir = Join-Path $root 'shaders\libretro'
+    $zip = Join-Path $root 'downloads\glsl-shaders.zip'
+    Write-Host "fetch libretro GLSL shaders"
+    Invoke-WebRequest 'https://github.com/libretro/glsl-shaders/archive/refs/heads/master.zip' -OutFile $zip
+    $unpacked = Join-Path $root 'downloads\glsl-shaders'
+    Expand-Archive $zip -DestinationPath $unpacked -Force
+    New-Item -ItemType Directory -Force $shaderDir | Out-Null
+    Copy-Item (Join-Path $unpacked 'glsl-shaders-master\*') $shaderDir -Recurse -Force
+    Write-Host "      $((Get-ChildItem $shaderDir -Recurse -Filter *.glslp).Count) presets in shaders\libretro"
 }

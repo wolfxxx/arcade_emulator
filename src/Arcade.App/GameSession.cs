@@ -64,6 +64,7 @@ sealed class GameSession : IDisposable
     public static GameSession Start(AppPaths paths, CoreCatalog catalog, string romPath, string? core, IInputSource input, AudioOutput audio, bool verbose)
     {
         var choice = catalog.Choose(romPath, core);
+        HiscoreExtras.Apply(paths.System);
         var host = CoreHost.Load(choice.DllPath, new CoreHostOptions
         {
             SystemDirectory = paths.System,
@@ -85,6 +86,7 @@ sealed class GameSession : IDisposable
             throw;
         }
         audio.Configure(host.AvInfo.Timing.SampleRate);
+        HiscoreExtras.Apply(paths.System); // in case the core only just wrote its hiscore.dat
 
         var title = choice.Check?.Game?.Description ?? Path.GetFileNameWithoutExtension(romPath);
         var session = new GameSession(host, audio, romPath, choice, title);
@@ -256,12 +258,18 @@ sealed class GameSession : IDisposable
     /// <summary>Extra quarter turns clockwise to show the picture at (the cabinet or game setting), on top of the core's own rotation.</summary>
     public int PictureRotation { get; set; }
 
-    public RectF Draw(VideoRenderer renderer, RectF area, int windowHeight, float alpha = 1)
+    public RectF Draw(VideoRenderer renderer, RectF area, int windowHeight, Video.PictureSettings picture, float alpha = 1)
     {
         // The renderer counts anticlockwise turns, like the core does.
         var turns = (uint)((_host.Rotation + 4 - PictureRotation % 4) % 4);
-        return renderer.Render(_host.LastFrame, turns, (float)DisplayAspect, area, windowHeight, alpha);
+        return renderer.Render(_host.LastFrame, turns, DisplayAspect, area, windowHeight, picture, Rewinding && CanRewind ? -1 : 1, alpha);
     }
+
+    /// <summary>The game's picture size as the core makes it, before turning.</summary>
+    public (int Width, int Height) FrameSize => (_host.LastFrame.Width, _host.LastFrame.Height);
+
+    /// <summary>The picture is shown a quarter turn round from how the core makes it.</summary>
+    public bool PictureTurned => (_host.Rotation + 4 - PictureRotation % 4) % 2 == 1;
 
     /// <summary>Aspect ratio of the game as designed, after the core's rotation.</summary>
     double UprightAspect

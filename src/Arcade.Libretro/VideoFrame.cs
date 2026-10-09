@@ -16,6 +16,15 @@ public sealed class VideoFrame
 
     public ReadOnlySpan<byte> Data => _buffer.AsSpan(0, Pitch * Height);
 
+    /// <summary>A frame made from pixels in memory (test pictures), rather than by a core.</summary>
+    public static unsafe VideoFrame Create(ReadOnlySpan<byte> data, int width, int height, int pitch, PixelFormat format, long frameNumber)
+    {
+        var frame = new VideoFrame();
+        fixed (byte* p = data)
+            frame.CopyFrom(p, width, height, pitch, format, frameNumber);
+        return frame;
+    }
+
     internal unsafe void CopyFrom(void* src, int width, int height, int pitch, PixelFormat format, long frameNumber)
     {
         var size = pitch * height;

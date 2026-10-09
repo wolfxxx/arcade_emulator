@@ -25,7 +25,9 @@ sealed unsafe class AppWindow : IDisposable
     {
         SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_CONTEXT_MAJOR_VERSION, 3);
         SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_CONTEXT_MINOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_CONTEXT_PROFILE_MASK, (int)SDL_GLProfile.SDL_GL_CONTEXT_PROFILE_CORE);
+        // A compatibility context, like RetroArch's, so older GLSL shaders in the shaders folder compile
+        // the way their authors tested them; core is the fallback where compatibility isn't offered.
+        SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_CONTEXT_PROFILE_MASK, (int)SDL_GLProfile.SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
         SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_DOUBLEBUFFER, 1);
 
         Offscreen = offscreenSize != null;
@@ -42,6 +44,11 @@ sealed unsafe class AppWindow : IDisposable
         SDL_SetWindowMinimumSize(_window, 480, 270);
 
         _context = SDL_GL_CreateContext(_window);
+        if (_context == null)
+        {
+            SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_CONTEXT_PROFILE_MASK, (int)SDL_GLProfile.SDL_GL_CONTEXT_PROFILE_CORE);
+            _context = SDL_GL_CreateContext(_window);
+        }
         if (_context == null)
             throw new InvalidOperationException("Could not create an OpenGL 3.3 context: " + SDL_GetError());
         SDL_GL_MakeCurrent(_window, _context);

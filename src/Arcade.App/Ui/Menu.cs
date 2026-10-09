@@ -35,7 +35,14 @@ sealed class Menu(string title, IReadOnlyList<MenuItem> items)
     /// <summary>Called when the menu is closed with Back rather than by choosing an item.</summary>
     public Action? OnCancel { get; init; }
     public IReadOnlyList<MenuItem> Items => items;
-    public int Selected => _selected;
+    /// <summary>The highlighted row; can be set when the menu is made, e.g. to return to where someone was.</summary>
+    public int Selected
+    {
+        get => _selected;
+        init => _selected = items.Count == 0 ? 0 : Math.Clamp(value, 0, items.Count - 1);
+    }
+    /// <summary>Drawn at the side without dimming the screen, so changes show on the game behind it.</summary>
+    public bool Docked { get; init; }
 
     public void Close() => IsOpen = false;
 
@@ -91,14 +98,15 @@ sealed class Menu(string title, IReadOnlyList<MenuItem> items)
     public void Draw(UiRenderer r, Theme theme, UiInput input, float dt)
     {
         var appear = Easing.SmoothStep(_openTime / 0.15f);
-        r.Fill(new RectF(0, 0, r.Width, r.Height), theme.Overlay.WithAlpha(appear));
+        if (!Docked)
+            r.Fill(new RectF(0, 0, r.Width, r.Height), theme.Overlay.WithAlpha(appear));
 
         var itemFont = theme.Body(r, 34);
         var titleFont = theme.Title(r, 30);
         var smallFont = theme.Body(r, 24);
         var rowH = r.S(64);
         var hasSide = SidePanel is { Count: > 0 };
-        var width = r.S(hasSide ? 1180 : 760);
+        var width = Math.Min(r.S(hasSide ? 1180 : 760), r.Width - r.S(40));
         var listW = hasSide ? r.S(640) : width;
         var bodyFont = theme.Body(r, 28);
         var bodyLines = Body == null ? [] : UiRenderer.Wrap(bodyFont, Body, listW - r.S(96));
@@ -107,7 +115,9 @@ sealed class Menu(string title, IReadOnlyList<MenuItem> items)
         var rowsShown = Math.Clamp((int)((r.Height - r.S(300) - bodyH) / rowH), 3, items.Count);
         var first = Math.Clamp(_selected - rowsShown / 2, 0, items.Count - rowsShown);
         var height = r.S(150) + bodyH + rowH * rowsShown + r.S(70);
-        var panel = new RectF((r.Width - width) / 2, (r.Height - height) / 2 + r.S(20) * (1 - appear), width, height);
+        var panel = Docked
+            ? new RectF(r.Width - width - r.S(30) + r.S(40) * (1 - appear), (r.Height - height) / 2, width, height)
+            : new RectF((r.Width - width) / 2, (r.Height - height) / 2 + r.S(20) * (1 - appear), width, height);
         var radius = theme.Radius(r) * 1.5f;
 
         r.Shadow(panel, radius, r.S(40), 0.6f * appear);

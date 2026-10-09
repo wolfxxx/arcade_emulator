@@ -316,6 +316,11 @@ sealed class BrowserScene : Scene
         });
         items.Add(new MenuItem { Label = "Cabinet setup…", OnAccept = OpenCabinet, Hint = "Screen rotation, vertical games, free play, cabinet mode" });
         items.Add(new MenuItem { Label = "Gameplay…", OnAccept = OpenGameplay, Hint = "Rewind, fast-forward and slow motion" });
+        items.Add(new MenuItem
+        {
+            Label = "Picture…", OnAccept = () => new Video.PictureMenu(App, null, m => _menu = m, OpenOptions).Open(),
+            Hint = "Scanlines and CRT effects, size and shape, bezel artwork",
+        });
         if (themes.Count > 0)
             items.Add(new MenuItem
             {

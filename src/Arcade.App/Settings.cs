@@ -25,6 +25,17 @@ sealed class Settings
     /// <summary>Speed of slow motion, as a fraction of normal.</summary>
     public double SlowMotionSpeed { get; set; } = 0.5;
 
+    // ---- Picture ----
+
+    /// <summary>How games look, unless a game has its own settings.</summary>
+    public Video.PictureSettings Picture { get; set; } = new();
+    /// <summary>Games with picture settings of their own, by set name.</summary>
+    public Dictionary<string, Video.PictureSettings> GamePictures { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The picture settings a game uses.</summary>
+    public Video.PictureSettings PictureFor(string? setName) =>
+        setName != null && GamePictures.TryGetValue(setName, out var own) ? own : Picture;
+
     // ---- Cabinet ----
 
     /// <summary>Quarter turns clockwise to turn the whole picture (menus too), for a monitor mounted on its side.</summary>
