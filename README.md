@@ -4,15 +4,15 @@ A custom arcade frontend for Windows, written in C# / .NET 8, that runs arcade R
 [libretro](https://www.libretro.com/) cores (FinalBurn Neo, MAME 2003-Plus). The cores emulate the
 hardware. This project owns everything the player sees and touches.
 
-**Status: Phase 6 done; Phase 7 (polish) under way, starting with run-ahead.** Start the app and you get a game list that works with a
+**Status: Phase 6 done; Phase 7 (polish) under way.** Start the app and you get a game list that works with a
 joystick alone: categories, search, favourites, previews, a pause menu in game, themes, and an attract
 mode that plays game demos when idle. Every key and button can be changed, per player, per device and
 per game, and there are settings for cabinets (sideways monitors, free play, a locked-down cabinet
 mode). In game there are save slots with pictures, rewind, fast-forward, slow motion, cheats and
 lasting high scores. The picture can look like an arcade monitor (scanlines, CRT effects, curved
 glass), with bezel artwork and size options, and any RetroArch GLSL shader preset can be added.
-Run-ahead takes away a frame or two of input lag. Still to come in Phase 7: recording, achievements,
-netplay and an installer.
+Run-ahead takes away a frame or two of input lag. It packages as a portable folder that runs on any
+Windows PC, and updates its own cores. Still to come in Phase 7: recording, achievements and netplay.
 
 ## Setup
 
@@ -23,6 +23,18 @@ netplay and an installer.
 ./tools/fetch-deps.ps1 -Bezels   # optional: The Bezel Project's artwork for the games in your library
 dotnet test                # unit tests + headless core tests
 ```
+
+**A portable copy** for another PC (a cabinet, say): `./tools/package.ps1` builds `dist/ArcadeEmulator/`
+and a zip of it: one self-contained `Arcade.App.exe` (no .NET needed), the cores and their game lists,
+themes, fonts, FBNeo's hiscore.dat, empty `roms/` and `artwork/bezels/` folders and a short README.txt.
+Your ROMs, saves, settings and library are never included; `-WithFreeRoms` adds just the four free
+mamedev.org games. Everything the copy keeps stays in its folder. ROM zips put in its `roms/` are
+found on first start. About 200 MB unpacked, 62 MB zipped.
+
+**Updating the cores:** Options › Update emulator cores, or `Arcade.App update-cores`, downloads the
+newest FinalBurn Neo and MAME 2003-Plus from the libretro buildbot together with their game lists
+(which must match the core's version) and FBNeo's hiscore.dat, replaces only what changed, and
+rescans the library. A core in use is renamed aside and deleted on a later start.
 
 ## Play
 
@@ -80,8 +92,10 @@ plays that frame (and with 2, the one after) in secret each frame, shows its pic
 game back, so you see the reaction at once. It costs under half a millisecond a frame for the test
 games. It needs a game that replays exactly from a save state; the app checks this as you play (every
 half second it compares a real frame with the picture it showed for it) and turns run-ahead off for
-the game, with a message, if they ever differ twice. FBNeo games pass; on MAME 2003-Plus some games
-drift after a while and get it turned off. It's skipped while fast-forwarding, in slow motion and
+the game, with a message, if they ever differ twice. It's only used with FinalBurn Neo games: MAME
+2003-Plus doesn't come back exactly from its save states, and running ahead every frame wrecks some
+games outright (Super Tank and Alien Arena crash within seconds, in a way the check can't see as the
+real frames go wrong too), so for its games run-ahead stays off and a message says so. It's skipped while fast-forwarding, in slow motion and
 when rewinding.
 
 How far ahead to run depends on the game, so **Automatic** works it out as you play. Each time the
@@ -92,8 +106,7 @@ ahead by the shortest one seen (at most 3 frames), refining it over twelve; the 
 game in `settings.json`, so the next session starts with it. Each timing also replays the old
 controls a second time, and is thrown away if that doesn't give the same pictures: a game that
 doesn't come back exactly from a saved state would otherwise look as if it answered at once. Measured
-on the test games: Gridlee 1 frame, Robby Roto 0 (it can answer in the same frame, so nothing to
-gain); Super Tank and Alien Arena can't be timed on MAME 2003-Plus, and run-ahead stays off for them.
+on the test games: Gridlee 1 frame (FinalBurn Neo; MAME 2003-Plus games aren't timed, as above).
 
 **Cheats** (pause menu › Cheats…) work for FBNeo games that have a cheat file in `system/fbneo/cheats/`.
 `fetch-deps.ps1 -Cheats` downloads FBNeo's collection (about 3,400 games). Cheats last until you leave the game.
@@ -164,7 +177,9 @@ radius, scanlines, a background image, and which side the list is on. Midnight (
 Cabinet (warm, pixel fonts, scanlines) are included. Copy one to make your own; it appears in Options.
 
 **Core selection:** each ROM zip is checked by CRC32 against each core's DAT (its list of supported
-sets and files). The first core that has every file wins, with FBNeo preferred. If no core matches, the
+sets and files). The first core that has every file wins, with FBNeo preferred, except for a few games
+another core serves better (Robby Roto goes to MAME 2003-Plus, which keeps its high scores; see
+`CoreCatalog.PreferredCores`). Your own choice (Options › Run with) always wins. If no core matches, the
 app lists what's missing instead of showing a black screen.
 
 **Timing:** if the game's refresh rate is within 1% of the monitor's, the app runs one frame per vsync.

@@ -35,7 +35,8 @@ sealed unsafe class ArcadeApp : IDisposable
     public AppOptions Options { get; }
     public AppPaths Paths { get; } = AppPaths.Discover();
     public Settings Settings { get; }
-    public CoreCatalog Catalog { get; }
+    /// <summary>The cores and their game lists; replaced after the cores are updated.</summary>
+    public CoreCatalog Catalog { get; private set; }
     public GameLibrary Library { get; private set; } = null!;
     public AppWindow Window { get; private set; } = null!;
     public UiRenderer Ui { get; private set; } = null!;
@@ -70,6 +71,9 @@ sealed unsafe class ArcadeApp : IDisposable
     // ---- Background library scan ----
     volatile string? _scanStatus;
     Task<ScanSummary?>? _scan;
+    Task<CoreUpdater.Result?>? _coreUpdate;
+
+    public bool UpdatingCores => _coreUpdate is { IsCompleted: false };
     public bool Scanning => _scan is { IsCompleted: false };
     public string? ScanStatus => _scanStatus;
     /// <summary>Raised on the main thread when a scan finishes, so the game list can reload.</summary>
@@ -292,7 +296,13 @@ sealed unsafe class ArcadeApp : IDisposable
         session.Slots = new StateSlots(StatesDir, session.SetName, ReadOnly ? null : Path.Combine(Paths.Saves, session.SetName + ".state"));
         session.CurrentSlot = session.Slots.Newest ?? 1;
         session.EnableRewind(Settings.RewindSeconds);
-        if (Settings.RunAheadFrames == Settings.AutomaticRunAhead)
+        if (Settings.RunAheadFrames != 0 && session.Choice.Core is not { RunAhead: true })
+        {
+            var core = session.Choice.Core?.DisplayName ?? "this core";
+            Console.WriteLine($"Input:  run-ahead is off: {core} doesn't come back exactly from save states");
+            ShowMessage($"Run-ahead doesn't work with {core} games, so it's off for this one");
+        }
+        else if (Settings.RunAheadFrames == Settings.AutomaticRunAhead)
         {
             var set = session.SetName;
             int? known = Settings.MeasuredRunAhead.TryGetValue(set, out var frames) ? frames : null;
@@ -401,7 +411,7 @@ sealed unsafe class ArcadeApp : IDisposable
                 using var library = new GameLibrary(dbPath);
                 if (Catalog.LibraryCores.Count == 0)
                 {
-                    _scanStatus = "No cores installed — run tools/fetch-deps.ps1";
+                    _scanStatus = "No emulator cores yet — use Options › Update emulator cores";
                     return null;
                 }
                 return Catalog.CreateScanner(library).Scan(new SyncProgress(s => _scanStatus = s));
@@ -415,6 +425,48 @@ sealed unsafe class ArcadeApp : IDisposable
         });
     }
 
+    /// <summary>Downloads new emulator cores and game lists in the background; see <see cref="CoreUpdater"/>.</summary>
+    public void StartCoreUpdate()
+    {
+        if (UpdatingCores || Scanning)
+            return;
+        ShowMessage("Checking for new emulator cores…");
+        _coreUpdate = Task.Run(() =>
+        {
+            try
+            {
+                // (Waited on here: this class is unsafe, which rules out await.)
+                return new CoreUpdater(Paths).UpdateAsync(Console.WriteLine).GetAwaiter().GetResult();
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine(e);
+                return null;
+            }
+        });
+    }
+
+    void FinishCoreUpdate(CoreUpdater.Result? result)
+    {
+        if (result == null)
+        {
+            ShowMessage("Updating the cores failed");
+            return;
+        }
+        foreach (var problem in result.Problems)
+            Console.Error.WriteLine("Core update: " + problem);
+        if (result.Updated.Count == 0)
+        {
+            ShowMessage(result.Problems.Count == 0 ? "The emulator cores are up to date" : "Couldn't check for new cores: " + result.Problems[0]);
+            return;
+        }
+        ShowMessage($"Updated {string.Join(", ", result.Updated)}" + (result.Problems.Count > 0 ? $" ({result.Problems.Count} problem(s))" : ""));
+        // New game lists: read them, and check the library against them.
+        Catalog = new CoreCatalog(Paths);
+        if (result.ListsChanged || result.CoresChanged)
+            StartScan();
+    }
+
     sealed class SyncProgress(Action<string> report) : IProgress<string>
     {
         public void Report(string value) => report(value);
@@ -422,6 +474,12 @@ sealed unsafe class ArcadeApp : IDisposable
 
     void PollBackgroundWork()
     {
+        if (_coreUpdate is { IsCompleted: true } update)
+        {
+            _coreUpdate = null;
+            FinishCoreUpdate(update.Result);
+        }
+
         if (_scan is { IsCompleted: true } scan)
         {
             _scan = null;

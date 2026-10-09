@@ -10,7 +10,7 @@ sealed class LibraryCommands(AppPaths paths)
 {
     readonly CoreCatalog _catalog = new(paths);
 
-    public static readonly string[] Names = ["scan", "list", "info", "set-core", "favorite", "folders", "bezels"];
+    public static readonly string[] Names = ["scan", "list", "info", "set-core", "favorite", "folders", "bezels", "update-cores"];
 
     public int Run(string command, string[] args)
     {
@@ -24,8 +24,26 @@ sealed class LibraryCommands(AppPaths paths)
             "favorite" when args.Length is 1 or 2 => Favorite(library, args[0], args.Length == 1 || args[1] != "off"),
             "folders" => Folders(library, args),
             "bezels" => Bezels(library),
+            "update-cores" => UpdateCores(library),
             _ => Fail($"Wrong arguments for '{command}'. Run with --help for usage."),
         };
+    }
+
+    /// <summary>Installs or updates the cores and their game lists, then rescans if a list changed.</summary>
+    int UpdateCores(GameLibrary library)
+    {
+        var result = new CoreUpdater(paths).UpdateAsync(Console.WriteLine).GetAwaiter().GetResult();
+        Console.WriteLine();
+        Console.WriteLine(result.Updated.Count == 0 ? "Nothing new." : $"Updated: {string.Join(", ", result.Updated)}");
+        foreach (var problem in result.Problems)
+            Console.WriteLine("  problem: " + problem);
+        if ((result.ListsChanged || result.CoresChanged) && library.Folders.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Checking the library against the new cores…");
+            return Scan(library, []) is var code && result.Problems.Count == 0 ? code : 1;
+        }
+        return result.Problems.Count == 0 ? 0 : 1;
     }
 
     /// <summary>Downloads The Bezel Project's artwork for every playable game that has none yet.</summary>

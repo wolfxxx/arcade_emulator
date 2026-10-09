@@ -231,6 +231,27 @@ public class HeadlessCoreTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Empty(lags);
     }
 
+    [RequiresCoreFact("mame2003_plus", "alienar")]
+    public void Run_ahead_wrecks_Alien_Arena_on_MAME_2003_Plus_so_that_core_is_left_out()
+    {
+        // Each reload of a MAME 2003-Plus state leaves a little behind; run ahead every frame and
+        // Alien Arena's boot goes wrong within seconds (the self-check can't see it: the frames shown
+        // and the real ones are wrong alike). So run-ahead is only offered on cores that replay exactly.
+        using var host = LoadCore("mame2003_plus", "alienar");
+        host.RunFrame();
+        var start = host.SaveState();
+        Run(host, 300);
+        var plain = host.LastFrame.ComputeHash();
+        host.LoadState(start);
+        host.RunAhead = 2;
+        Run(host, 300);
+        host.RunAhead = 0;
+        Run(host, 1);
+        Assert.NotEqual(plain, host.LastFrame.ComputeHash());
+        Assert.False(Arcade.App.CoreCatalog.Find("mame2003_plus")!.RunAhead);
+        Assert.True(Arcade.App.CoreCatalog.Find("fbneo")!.RunAhead);
+    }
+
     sealed class CountingInput : IInputSource
     {
         public int Polls;

@@ -20,6 +20,9 @@ public sealed class LibraryScanner(GameLibrary library, IReadOnlyList<LibraryCor
     /// <summary>Player info per set, e.g. "2P alt" from nplayers.ini; used when the DAT has no player count.</summary>
     public IReadOnlyDictionary<string, string> NPlayers { get; init; } = new Dictionary<string, string>();
 
+    /// <summary>Core to prefer per set when the player hasn't chosen one (used if that core can play it).</summary>
+    public IReadOnlyDictionary<string, string> PreferredCores { get; init; } = new Dictionary<string, string>();
+
     public ScanSummary Scan(IProgress<string>? progress = null)
     {
         var clock = Stopwatch.StartNew();
@@ -55,7 +58,7 @@ public sealed class LibraryScanner(GameLibrary library, IReadOnlyList<LibraryCor
         foreach (var path in gameZips)
         {
             var setName = Path.GetFileNameWithoutExtension(path);
-            var assessment = SetClassifier.Assess(path, cores, systemDirs, ReadCrcs, overrides.GetValueOrDefault(setName));
+            var assessment = SetClassifier.Assess(path, cores, systemDirs, ReadCrcs, overrides.GetValueOrDefault(setName) ?? PreferredCores.GetValueOrDefault(setName));
             var game = ToLibraryGame(path, assessment);
             // The same set in two folders: keep the better copy.
             if (!bySet.TryGetValue(setName, out var existing) || game.Status < existing.Status)

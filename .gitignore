@@ -11,6 +11,7 @@ roms/
 system/
 saves/
 out/
+dist/
 dats/
 library.db*
 artwork/

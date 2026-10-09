@@ -18,6 +18,7 @@ const string Usage = """
       favorite <set> [off]        mark or unmark a favourite
       folders [--remove <folder>] show or remove library folders
       bezels                      download bezel artwork (The Bezel Project) for games that have none
+      update-cores                install or update the emulator cores and their game lists, then rescan
       shaders [--check] [folder]  list picture styles; --check tests each preset in a hidden window
 
     Game list: arrows move · Enter play · F favourite · Tab options · / search
@@ -41,6 +42,7 @@ if (args.Length > 0 && args[0] is "-h" or "--help" or "/?")
 }
 
 var paths = AppPaths.Discover();
+CoreUpdater.CleanUp(paths);
 if (args.Length > 0 && LibraryCommands.Names.Contains(args[0]) && !File.Exists(args[0]))
     return new LibraryCommands(paths).Run(args[0], args[1..]);
 if (args.Length > 0 && args[0] == "shaders" && !File.Exists(args[0]))
