@@ -152,11 +152,260 @@ public sealed unsafe class CoreHost : IDisposable
         _retroSetControllerPortDevice(1, RetroDevice.Joypad);
     }
 
-    /// <summary>Emulates exactly one frame.</summary>
+    /// <summary>
+    /// Frames to run ahead (0 = off). A game reacts to a button a frame or more after it is pressed;
+    /// running ahead shows the picture from that many frames on, so the reaction appears at once.
+    /// </summary>
+    public int RunAhead { get; set; }
+
+    /// <summary>Why run-ahead turned itself off for this game, or null.</summary>
+    public string? RunAheadProblem { get; private set; }
+
+    /// <summary>Emulates exactly one frame (and with <see cref="RunAhead"/>, shows a later one).</summary>
     public void RunFrame()
     {
-        _retroRun();
+        if (MeasureLag && _options.Input != null && _gameLoaded)
+            ReadControlsAndMeasure(_options.Input);
+        try
+        {
+            if (RunAhead > 0 && RunAheadProblem == null)
+                RunFrameAhead(RunAhead);
+            else
+                _retroRun();
+        }
+        finally
+        {
+            _polledForFrame = false;
+        }
         FrameCount++;
+    }
+
+    // ---- Measuring how long a game takes to answer the controls ----
+
+    /// <summary>
+    /// When on, each time the stick or a button changes, the game is played a few frames on in
+    /// secret twice, with the controls as they were and as they are now; the first frame whose
+    /// picture differs tells how long the game takes to answer (see <see cref="LagMeasured"/>).
+    /// </summary>
+    public bool MeasureLag { get; set; }
+
+    /// <summary>Frames the game took to show a change of the controls: 0 = in the very frame it was read.</summary>
+    public event Action<int>? LagMeasured;
+
+    /// <summary>Timings thrown away because the game didn't replay the same way twice from its saved state.</summary>
+    public int UnrepeatableTimings { get; private set; }
+
+    const int LagWindow = 8;
+    // Coin and Start are left out: credits and starting a game take their own time to show.
+    const ushort LagIgnoredButtons = (1 << (int)JoypadButton.Select) | (1 << (int)JoypadButton.Start);
+    readonly ushort[] _controls = new ushort[4], _previousControls = new ushort[4];
+    readonly ulong[] _withOldControls = new ulong[LagWindow];
+    ushort[]? _controlsOverride;
+    bool _polledForFrame, _measuring, _haveControls;
+    ulong _measuredPicture;
+    byte[] _lagState = [];
+
+    /// <summary>Reads the controls for this frame now (instead of when the core asks) to see if they changed.</summary>
+    void ReadControlsAndMeasure(IInputSource input)
+    {
+        input.Poll();
+        _polledForFrame = true;
+        Array.Copy(_controls, _previousControls, _controls.Length);
+        var changed = false;
+        for (uint port = 0; port < _controls.Length; port++)
+        {
+            _controls[port] = (ushort)ReadInput(input, port, RetroDevice.Joypad, 0, RetroConst.JoypadMask);
+            changed |= ((_controls[port] ^ _previousControls[port]) & ~LagIgnoredButtons) != 0;
+        }
+        if (changed && _haveControls)
+            MeasureLagNow();
+        _haveControls = true;
+    }
+
+    void MeasureLagNow()
+    {
+        var size = StateSize;
+        if (size <= 0)
+            return;
+        if (_lagState.Length != size)
+            _lagState = new byte[size];
+        if (!TrySaveState(_lagState))
+            return;
+        _measuring = true;
+        _audioOn = false;
+        _inputFrozen = true;
+        try
+        {
+            _controlsOverride = _previousControls;
+            for (var i = 0; i < LagWindow; i++)
+            {
+                _measuredPicture = 0;
+                _retroRun();
+                _withOldControls[i] = _measuredPicture;
+            }
+            if (!RestoreLagState(size))
+                return;
+            _controlsOverride = _controls;
+            var lag = -1;
+            for (var i = 0; i < LagWindow && lag < 0; i++)
+            {
+                _measuredPicture = 0;
+                _retroRun();
+                if (_measuredPicture != _withOldControls[i])
+                    lag = i;
+            }
+            if (!RestoreLagState(size))
+                return;
+            if (lag < 0)
+                return;
+            // Replay the old controls once more: if that doesn't give the same pictures, the
+            // difference came from the core not returning exactly to its saved state, not from
+            // the controls, so the timing can't be trusted.
+            _controlsOverride = _previousControls;
+            var repeatable = true;
+            for (var i = 0; i <= lag && repeatable; i++)
+            {
+                _measuredPicture = 0;
+                _retroRun();
+                repeatable = _measuredPicture == _withOldControls[i];
+            }
+            if (!RestoreLagState(size))
+                return;
+            if (repeatable)
+                LagMeasured?.Invoke(lag);
+            else
+                UnrepeatableTimings++;
+        }
+        finally
+        {
+            _measuring = false;
+            _audioOn = true;
+            _inputFrozen = false;
+            _controlsOverride = null;
+        }
+    }
+
+    bool RestoreLagState(int size)
+    {
+        fixed (byte* p = _lagState)
+            if (_retroUnserialize(p, (nuint)size) != 0)
+                return true;
+        MeasureLag = false;
+        Log(LogLevel.Warn, "Stopped timing the controls: the core couldn't load its state back");
+        return false;
+    }
+
+    /// <summary>FNV-1a over the visible pixels of a picture still in the core's memory.</summary>
+    static ulong HashPicture(byte* data, uint width, uint height, nuint pitch, int bytesPerPixel)
+    {
+        var hash = 14695981039346656037UL;
+        var rowBytes = (int)width * bytesPerPixel;
+        for (var y = 0; y < height; y++)
+            foreach (var b in new ReadOnlySpan<byte>(data + (nuint)y * pitch, rowBytes))
+                hash = (hash ^ b) * 1099511628211UL;
+        return hash;
+    }
+
+    bool _videoOn = true, _audioOn = true, _inputFrozen, _runningAhead, _pictureSent;
+    byte[] _aheadState = [];
+
+    // Self-check: some games keep part of their state outside save states, and then the frames
+    // run ahead come out different from the real ones. Every so often the real frame's picture is
+    // compared with the one shown for it earlier; while the controls haven't changed they must match.
+    const int CheckEvery = 30, MismatchesAllowed = 1;
+    const ulong InputSeed = 14695981039346656037;
+    readonly Queue<(ulong Input, ulong Picture)> _predictions = new();
+    int _predictionsAhead, _checkCountdown = CheckEvery, _mismatches;
+    ulong _inputRead;
+
+    /// <summary>Times the self-check compared a real frame with the picture shown for it.</summary>
+    public int RunAheadChecks { get; private set; }
+
+    /// <summary>
+    /// Runs the real frame with its sound but not its picture, saves the state, runs on
+    /// <paramref name="frames"/> more frames with the same input to get their picture (in silence),
+    /// then puts the state back. Input is only read for the real frame, so anything counting
+    /// frames as they're read (free play's coin-then-start) runs at the normal rate.
+    /// </summary>
+    void RunFrameAhead(int frames)
+    {
+        var size = StateSize;
+        if (size <= 0)
+        {
+            StopRunAhead("this game can't save its state");
+            _retroRun();
+            return;
+        }
+        if (_aheadState.Length != size)
+            _aheadState = new byte[size];
+        if (_predictionsAhead != frames)
+        {
+            _predictions.Clear();
+            _predictionsAhead = frames;
+        }
+
+        try
+        {
+            var check = --_checkCountdown <= 0 && _predictions.Count == frames;
+            _videoOn = check;
+            _pictureSent = false;
+            _inputRead = InputSeed;
+            _retroRun();
+            _videoOn = true;
+            if (check)
+            {
+                _checkCountdown = CheckEvery;
+                CheckPrediction();
+            }
+            var input = _inputRead;
+            _runningAhead = true;
+            if (!TrySaveState(_aheadState))
+            {
+                StopRunAhead("the core couldn't save its state");
+                return;
+            }
+            _audioOn = false;
+            _inputFrozen = true;
+            for (var i = 1; i <= frames; i++)
+            {
+                _videoOn = i == frames;
+                _retroRun();
+            }
+            _predictions.Enqueue((input, LastFrame.ComputeHash()));
+            if (_predictions.Count > frames)
+                _predictions.Dequeue();
+            fixed (byte* p = _aheadState)
+                if (_retroUnserialize(p, (nuint)size) == 0)
+                    StopRunAhead("the core couldn't load its state back");
+        }
+        finally
+        {
+            _videoOn = _audioOn = true;
+            _inputFrozen = _runningAhead = false;
+        }
+    }
+
+    /// <summary>
+    /// Called after a real frame drawn for checking. The oldest prediction is the picture shown for
+    /// this frame; it was made with the input of its own frame, so it only counts if every real frame
+    /// since then (this one included) read the same input.
+    /// </summary>
+    void CheckPrediction()
+    {
+        if (!_pictureSent)
+            return; // the core repeated its last picture, which we never kept
+        var (input, picture) = _predictions.Peek();
+        if (input != _inputRead || _predictions.Any(p => p.Input != input))
+            return;
+        RunAheadChecks++;
+        if (picture != LastFrame.ComputeHash() && ++_mismatches > MismatchesAllowed)
+            StopRunAhead("the game doesn't play back exactly from a saved state");
+    }
+
+    void StopRunAhead(string reason)
+    {
+        RunAheadProblem = reason;
+        Log(LogLevel.Warn, "Run-ahead is off: " + reason);
     }
 
     public void Reset() => _retroReset();
@@ -382,7 +631,9 @@ public sealed unsafe class CoreHost : IDisposable
             case RetroEnv.GetInputBitmasks:
                 return true;
             case RetroEnv.GetAudioVideoEnable:
-                *(int*)data = 1 | 2; // video and audio enabled
+                // Bits: 1 video wanted, 2 audio wanted, 4 state saves are only for run-ahead (may
+                // be faster), 8 audio is thrown away (the core can skip making it).
+                *(int*)data = (_videoOn ? 1 : 0) | (_audioOn ? 2 : 8) | (_runningAhead ? 4 : 0);
                 return true;
             case RetroEnv.GetFastForwarding:
                 *(byte*)data = FastForwarding ? (byte)1 : (byte)0;
@@ -392,7 +643,7 @@ public sealed unsafe class CoreHost : IDisposable
                 return true;
             case RetroEnv.GetSavestateContext:
                 if (data != null)
-                    *(int*)data = 0; // RETRO_SAVESTATE_CONTEXT_NORMAL: states are for the user, not runahead/rollback
+                    *(int*)data = 0; // NORMAL. (FBNeo leaves part of the game out of RUNAHEAD_SAME_INSTANCE states and then shows stale pictures.)
                 return true;
             case RetroEnv.GetMessageInterfaceVersion:
                 *(uint*)data = 1;
@@ -459,16 +710,23 @@ public sealed unsafe class CoreHost : IDisposable
     static void OnVideoRefresh(void* data, uint width, uint height, nuint pitch)
     {
         var host = s_current;
-        if (host == null || data == null)
+        if (host == null || data == null || !host._videoOn)
             return; // null data = duplicate of the previous frame
+        if (host._measuring)
+        {
+            // Timing the controls: only which picture it is matters, and the one on show stays.
+            host._measuredPicture = HashPicture((byte*)data, width, height, pitch, host.PixelFormat == PixelFormat.Xrgb8888 ? 4 : 2);
+            return;
+        }
         host.LastFrame.CopyFrom(data, (int)width, (int)height, (int)pitch, host.PixelFormat, host.FrameCount);
+        host._pictureSent = true;
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void OnAudioSample(short left, short right)
     {
         var host = s_current;
-        if (host == null)
+        if (host == null || !host._audioOn)
             return;
         host.AudioFramesReceived++;
         if (host._options.Audio is { } sink)
@@ -482,7 +740,7 @@ public sealed unsafe class CoreHost : IDisposable
     static nuint OnAudioSampleBatch(short* data, nuint frames)
     {
         var host = s_current;
-        if (host == null)
+        if (host == null || !host._audioOn)
             return frames;
         host.AudioFramesReceived += (long)frames;
         host._options.Audio?.Write(new ReadOnlySpan<short>(data, (int)frames * 2));
@@ -490,12 +748,31 @@ public sealed unsafe class CoreHost : IDisposable
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-    static void OnInputPoll() => s_current?._options.Input?.Poll();
+    static void OnInputPoll()
+    {
+        if (s_current is { _inputFrozen: false, _polledForFrame: false } host)
+            host._options.Input?.Poll();
+    }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static short OnInputState(uint port, uint device, uint index, uint id)
     {
-        var input = s_current?._options.Input;
+        var host = s_current;
+        if (host == null)
+            return 0;
+        if (host._controlsOverride is { } controls && device == RetroDevice.Joypad)
+        {
+            var bits = port < controls.Length ? controls[port] : 0;
+            return (short)(id == RetroConst.JoypadMask ? bits : id < 16 ? (bits >> (int)id) & 1 : 0);
+        }
+        var value = ReadInput(host._options.Input, port, device, index, id);
+        if (!host._inputFrozen)
+            host._inputRead = (host._inputRead ^ (ushort)value ^ ((ulong)id << 16) ^ ((ulong)port << 32) ^ ((ulong)device << 40) ^ ((ulong)index << 48)) * 1099511628211;
+        return value;
+    }
+
+    static short ReadInput(IInputSource? input, uint port, uint device, uint index, uint id)
+    {
         if (input == null)
             return 0;
         if (device == RetroDevice.Joypad && id == RetroConst.JoypadMask)

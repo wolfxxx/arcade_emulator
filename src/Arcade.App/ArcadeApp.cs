@@ -292,6 +292,30 @@ sealed unsafe class ArcadeApp : IDisposable
         session.Slots = new StateSlots(StatesDir, session.SetName, ReadOnly ? null : Path.Combine(Paths.Saves, session.SetName + ".state"));
         session.CurrentSlot = session.Slots.Newest ?? 1;
         session.EnableRewind(Settings.RewindSeconds);
+        if (Settings.RunAheadFrames == Settings.AutomaticRunAhead)
+        {
+            var set = session.SetName;
+            int? known = Settings.MeasuredRunAhead.TryGetValue(set, out var frames) ? frames : null;
+            session.UseAutomaticRunAhead(known, measured =>
+            {
+                Settings.MeasuredRunAhead[set] = measured;
+                Settings.Save(SettingsPath);
+                Console.WriteLine($"Input:  measured {set}: answers after {measured} frame(s); running that far ahead");
+                ShowMessage(measured == 0 ? "This game answers the controls at once: no run-ahead needed"
+                    : $"Run-ahead set to {measured} frame{(measured == 1 ? "" : "s")} for this game");
+            }, () =>
+            {
+                Console.WriteLine($"Input:  {set} doesn't replay exactly from a saved state, so it can't be timed or run ahead");
+                ShowMessage("Run-ahead can't be used with this game");
+            });
+            Console.WriteLine($"Input:  automatic run-ahead, {(known is { } k ? $"{k} frame(s) as measured before" : "timing the game as it's played")}");
+        }
+        else
+        {
+            session.RunAheadFrames = Settings.RunAheadFrames;
+            if (session.RunAheadFrames > 0)
+                Console.WriteLine($"Input:  running {session.RunAheadFrames} frame(s) ahead");
+        }
     }
 
     // ---- Controls and cabinet ----

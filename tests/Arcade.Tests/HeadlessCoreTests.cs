@@ -135,6 +135,150 @@ public class HeadlessCoreTests(Xunit.Abstractions.ITestOutputHelper output)
     }
 
     [RequiresCoreFact("fbneo", "gridlee")]
+    public void Run_ahead_shows_the_next_frame_on_fbneo() => RunAheadShowsLaterFrames("fbneo", "gridlee", 1);
+
+    [RequiresCoreFact("fbneo", "gridlee")]
+    public void Run_ahead_shows_two_frames_later_on_fbneo() => RunAheadShowsLaterFrames("fbneo", "gridlee", 2);
+
+    [RequiresCoreFact("mame2003_plus", "robby")]
+    public void Run_ahead_pictures_match_the_real_frames_on_mame2003_plus()
+    {
+        // Running ahead nudges something MAME 2003-Plus keeps outside save states: Robby Roto's
+        // demo differs from a plain run after a few seconds, though for its first 15 seconds what's
+        // shown is still what the game then really does, as the self-check confirms. (Later in the
+        // demo the predictions do start to miss, and the self-check turns run-ahead off.)
+        var input = new CountingInput();
+        using var host = LoadCore("mame2003_plus", "robby", input);
+        host.RunAhead = 1;
+        Run(host, 900);
+        Assert.Null(host.RunAheadProblem);
+        Assert.True(host.RunAheadChecks > 20, $"{host.RunAheadChecks} self-checks");
+        Assert.Equal(900, input.Polls);
+    }
+
+    [RequiresCoreFact("mame2003_plus", "supertnk")]
+    public void Run_ahead_turns_itself_off_when_a_game_does_not_replay_exactly()
+    {
+        // MAME 2003-Plus's Super Tank doesn't come back exactly from a save state when run two
+        // frames ahead, so what's shown isn't what then really happens; the self-check must notice.
+        using var host = LoadCore("mame2003_plus", "supertnk", new CountingInput());
+        Run(host, 200);
+        host.RunAhead = 2;
+        for (var i = 0; i < 1200 && host.RunAheadProblem == null; i++)
+            host.RunFrame();
+        Assert.NotNull(host.RunAheadProblem);
+        output.WriteLine($"{host.RunAheadProblem} (after {host.FrameCount - 200} frames ahead, {host.RunAheadChecks} checks)");
+    }
+    [RequiresCoreFact("fbneo", "gridlee")]
+    public void Timing_the_controls_measures_the_game_without_changing_it()
+    {
+        // Coin, start, then steer about: every change of the stick is timed.
+        static ScriptedInput Script(Func<long> clock)
+        {
+            var input = new ScriptedInput(clock).Press(60, JoypadButton.Select).Press(120, JoypadButton.Start);
+            for (var t = 300; t < 900; t += 50)
+                input.Press(t, t / 50 % 2 == 0 ? JoypadButton.Left : JoypadButton.Up, 20);
+            return input;
+        }
+        // Both plays start from one saved moment, as FBNeo seeds a byte from the clock when it loads.
+        const int Frames = 900;
+        var plain = new List<ulong>();
+        var lags = new List<int>();
+        long clock = 0;
+        using var host = LoadCore("fbneo", "gridlee", Script(() => clock - 1));
+        host.RunFrame();
+        var start = host.SaveState();
+        for (clock = 1; clock <= Frames; clock++)
+        {
+            host.RunFrame();
+            plain.Add(host.LastFrame.ComputeHash());
+        }
+
+        host.LoadState(start);
+        {
+            host.MeasureLag = true;
+            host.LagMeasured += lags.Add;
+            for (clock = 1; clock <= Frames; clock++)
+            {
+                host.RunFrame();
+                Assert.True(plain[(int)clock - 1] == host.LastFrame.ComputeHash(), $"frame {clock} changed by timing the controls");
+            }
+            Assert.Equal(0, host.UnrepeatableTimings);
+        }
+        output.WriteLine($"Gridlee answered the stick after: {string.Join(", ", lags)} frame(s)");
+        Assert.True(lags.Count >= 10, $"only {lags.Count} timings");
+        Assert.All(lags, lag => Assert.InRange(lag, 0, 7));
+        Assert.Equal(1, lags.Min()); // Gridlee reads the controls a frame before it draws their effect
+    }
+
+    [RequiresCoreFact("mame2003_plus", "alienar")]
+    public void Timings_that_do_not_replay_the_same_are_thrown_away()
+    {
+        // MAME 2003-Plus's Alien Arena doesn't come back exactly from a saved state, which would
+        // look like the game answering the controls at once; such timings must not be reported.
+        long clock = 0;
+        var input = new ScriptedInput(() => clock);
+        for (var t = 200; t < 1000; t += 40)
+            input.Press(t, t / 40 % 2 == 0 ? JoypadButton.Left : JoypadButton.Up, 15);
+        using var host = LoadCore("mame2003_plus", "alienar", input);
+        var lags = new List<int>();
+        host.MeasureLag = true;
+        host.LagMeasured += lags.Add;
+        for (; clock < 1000; clock++)
+            host.RunFrame();
+        output.WriteLine($"kept {lags.Count}, thrown away {host.UnrepeatableTimings}");
+        Assert.True(host.UnrepeatableTimings >= 6);
+        Assert.Empty(lags);
+    }
+
+    sealed class CountingInput : IInputSource
+    {
+        public int Polls;
+        public void Poll() => Polls++;
+        public short GetState(uint port, uint device, uint index, uint id) => 0;
+    }
+
+    /// <summary>
+    /// With no input, a game run <paramref name="ahead"/> frames ahead must show at frame k the
+    /// picture the plain game shows at frame k + ahead, while its sound and input reads stay those
+    /// of frame k.
+    /// </summary>
+    void RunAheadShowsLaterFrames(string core, string rom, int ahead)
+    {
+        // Both plays start from one saved moment, as FBNeo seeds a byte from the clock when it loads.
+        const int Frames = 400;
+        var input = new CountingInput();
+        using var host = LoadCore(core, rom, input);
+        Run(host, 200);
+        var start = host.SaveState();
+        var plain = new List<ulong>();
+        var audio = host.AudioFramesReceived;
+        for (var i = 0; i < Frames + ahead; i++)
+        {
+            host.RunFrame();
+            plain.Add(host.LastFrame.ComputeHash());
+            if (i == Frames - 1)
+                audio = host.AudioFramesReceived - audio;
+        }
+        var moving = plain.Zip(plain.Skip(1)).Count(p => p.First != p.Second);
+        Assert.True(moving > 50, $"the test needs a moving picture ({moving} changes)");
+
+        host.LoadState(start);
+        var polls = input.Polls;
+        var audioBefore = host.AudioFramesReceived;
+        host.RunAhead = ahead;
+        for (var i = 0; i < Frames; i++)
+        {
+            host.RunFrame();
+            Assert.True(plain[i + ahead] == host.LastFrame.ComputeHash(), $"frame {i} doesn't show frame {i + ahead}");
+        }
+        Assert.Null(host.RunAheadProblem);
+        Assert.True(host.RunAheadChecks > 5, $"{host.RunAheadChecks} self-checks");
+        Assert.Equal(Frames, input.Polls - polls); // hidden frames don't read the controls again
+        Assert.Equal(audio, host.AudioFramesReceived - audioBefore); // only the real frames' sound
+        output.WriteLine($"{core}/{rom}: {Frames} frames shown {ahead} ahead, {moving} picture changes, {host.RunAheadChecks} self-checks");
+    }
+    [RequiresCoreFact("fbneo", "gridlee")]
     public void FBNeo_lists_a_games_cheats_as_options()
     {
         var cheats = Path.Combine(Path.GetTempPath(), "arcade-tests", "system", "fbneo", "cheats");

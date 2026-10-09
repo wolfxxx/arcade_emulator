@@ -20,6 +20,14 @@ sealed class Settings
 
     /// <summary>Seconds of play kept for rewinding; 0 turns rewind off.</summary>
     public int RewindSeconds { get; set; } = 60;
+    /// <summary>
+    /// Frames of input lag to remove by running ahead (0 = off; <see cref="AutomaticRunAhead"/> = as
+    /// each game needs). Costs that many extra frames of work per frame.
+    /// </summary>
+    public int RunAheadFrames { get; set; }
+    public const int AutomaticRunAhead = -1;
+    /// <summary>How many frames each game took to answer the controls, timed while playing it, by set name.</summary>
+    public Dictionary<string, int> MeasuredRunAhead { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>How many times normal speed fast-forward runs at.</summary>
     public double FastForwardSpeed { get; set; } = 3;
     /// <summary>Speed of slow motion, as a fraction of normal.</summary>

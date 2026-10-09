@@ -22,6 +22,7 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
     float _time;
     bool _slowMotion;
     bool _rewindWasHeld;
+    GameSession? _runAheadReported;
 
     bool Paused => _menu != null || _controls != null || _states != null;
 
@@ -136,6 +137,11 @@ sealed class GameScene(ArcadeApp app, GameSession session, GameMode mode, Librar
         session.Speed = mapper.IsHeld(Hotkey.FastForward) ? App.Settings.FastForwardSpeed
             : _slowMotion ? App.Settings.SlowMotionSpeed : 1;
         session.Advance(elapsed);
+        if (session.RunAheadProblem is { } problem && _runAheadReported != session)
+        {
+            _runAheadReported = session;
+            App.ShowMessage("Run-ahead is off for this game: " + problem);
+        }
         if (session.Host.ShutdownRequested)
             App.ReturnToBrowser(session.SetName);
     }

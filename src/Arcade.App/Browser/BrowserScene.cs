@@ -315,7 +315,7 @@ sealed class BrowserScene : Scene
             Hint = "Keys, pads and arcade sticks for each player, hotkeys" + (game != null ? ", and this game's button layout" : ""),
         });
         items.Add(new MenuItem { Label = "Cabinet setup…", OnAccept = OpenCabinet, Hint = "Screen rotation, vertical games, free play, cabinet mode" });
-        items.Add(new MenuItem { Label = "Gameplay…", OnAccept = OpenGameplay, Hint = "Rewind, fast-forward and slow motion" });
+        items.Add(new MenuItem { Label = "Gameplay…", OnAccept = OpenGameplay, Hint = "Rewind, run-ahead, fast-forward and slow motion" });
         items.Add(new MenuItem
         {
             Label = "Picture…", OnAccept = () => new Video.PictureMenu(App, null, m => _menu = m, OpenOptions).Open(),
@@ -421,6 +421,7 @@ sealed class BrowserScene : Scene
         int[] rewind = [0, 15, 30, 60, 120, 300];
         double[] fast = [2, 3, 4, 6, 8];
         double[] slow = [0.5, 0.25];
+        int[] runAhead = [0, Settings.AutomaticRunAhead, 1, 2];
         string Key(Hotkey hotkey) => App.Controls.HotkeyBindings(hotkey).FirstOrDefault() is var b && b != default ? b.Label : "its hotkey";
         _menu = new Menu("Gameplay",
         [
@@ -430,6 +431,13 @@ sealed class BrowserScene : Scene
                 Choice = Math.Max(0, Array.IndexOf(rewind, settings.RewindSeconds)),
                 OnChoice = i => { settings.RewindSeconds = rewind[i]; Save(); },
                 Hint = $"Hold {Key(Hotkey.Rewind)} to run the game backwards · from the next game you start",
+            },
+            new MenuItem
+            {
+                Label = "Run-ahead", Choices = ["Off", "Automatic", "1 frame", "2 frames"],
+                Choice = Math.Max(0, Array.IndexOf(runAhead, settings.RunAheadFrames)),
+                OnChoice = i => { settings.RunAheadFrames = runAhead[i]; Save(); },
+                Hint = "Controls answer sooner · Automatic times each game as you play it",
             },
             new MenuItem
             {
