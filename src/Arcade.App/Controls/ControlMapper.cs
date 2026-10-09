@@ -38,6 +38,9 @@ sealed class ControlMapper
     readonly float[] _comboTime = new float[Enum.GetValues<Hotkey>().Length];
     readonly bool[] _comboFired = new bool[Enum.GetValues<Hotkey>().Length];
     readonly bool[] _directWasDown = new bool[Enum.GetValues<Hotkey>().Length];
+    readonly bool[] _hotkeyHeld = new bool[Enum.GetValues<Hotkey>().Length];
+    readonly bool[] _waitForRelease = new bool[Enum.GetValues<Hotkey>().Length];
+    readonly float[] _injectedHold = new float[Enum.GetValues<Hotkey>().Length];
     readonly List<Hotkey> _fired = new();
     readonly ushort[] _retro = new ushort[ArcadeControls.MaxPlayers];
     readonly int[] _freePlayFrame = [-1, -1, -1, -1];
@@ -70,6 +73,12 @@ sealed class ControlMapper
 
     /// <summary>Hotkeys that fired in the last <see cref="Update"/>.</summary>
     public IReadOnlyList<Hotkey> FiredHotkeys => _fired;
+
+    /// <summary>
+    /// True while a hotkey is held (for rewind and fast-forward): its own key straight away, or a
+    /// hotkey-enable combination once it has been held for <see cref="ControlConfig.ComboHoldSeconds"/>.
+    /// </summary>
+    public bool IsHeld(Hotkey hotkey) => _hotkeyHeld[(int)hotkey];
 
     /// <summary>True while the hotkey-enable button is held.</summary>
     public bool EnableHeld => _enableHeld;
@@ -203,6 +212,19 @@ sealed class ControlMapper
                 _comboTime[h] = 0;
                 _comboFired[h] = false;
             }
+
+            var down = direct || (combo && _comboTime[h] >= Config.ComboHoldSeconds);
+            if (!down)
+                _waitForRelease[h] = false;
+            _hotkeyHeld[h] = down && !_waitForRelease[h];
+        }
+
+        for (var h = 0; h < _injectedHold.Length; h++)
+        {
+            if (_injectedHold[h] <= 0)
+                continue;
+            _hotkeyHeld[h] = true;
+            _injectedHold[h] -= dt;
         }
     }
 
@@ -224,12 +246,18 @@ sealed class ControlMapper
     /// <summary>Fires a hotkey on the next <see cref="Update"/> as if pressed (automation scripts).</summary>
     public void Inject(Hotkey hotkey) => _injected.Add(hotkey);
 
+    /// <summary>Holds a hotkey for a while as if its key were held down (automation scripts).</summary>
+    public void InjectHold(Hotkey hotkey, float seconds) => _injectedHold[(int)hotkey] = seconds;
+
     /// <summary>Forgets held hotkeys, e.g. after a menu closes, so the button that closed it doesn't fire again.</summary>
     public void ResetHotkeys()
     {
         Array.Fill(_comboFired, true);
         Array.Clear(_comboTime);
         Array.Fill(_directWasDown, true);
+        // A key still down from the menu (e.g. Backspace closing it) mustn't start rewinding.
+        Array.Fill(_waitForRelease, true);
+        Array.Clear(_hotkeyHeld);
     }
 
     /// <summary>

@@ -23,6 +23,7 @@ const string Usage = """
     In game:   arrows move · Z X A S Q W E D (or Ctrl Alt Space Shift) buttons 1-8
                5 coin · 1 start · player 2: R F G H move, I O K L buttons, 6 coin, 2 start
                Esc pause menu · F2 save state · F4 load state · F3 reset · F12 screenshot
+               Backspace (hold) rewind · Tab (hold) fast-forward · F7 slow motion
                F11 or Alt+Enter fullscreen
     Pads:      any XInput/PlayStation/Switch controller, or a USB arcade stick/encoder.
                Back = coin, Start = start; Guide, or hold Back + Start, for the pause menu

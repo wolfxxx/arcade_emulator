@@ -2,7 +2,7 @@ using Arcade.Libretro;
 
 namespace Arcade.Tests;
 
-public class HeadlessCoreTests
+public class HeadlessCoreTests(Xunit.Abstractions.ITestOutputHelper output)
 {
     static CoreHost LoadCore(string core, string rom, IInputSource? input = null)
     {
@@ -87,6 +87,78 @@ public class HeadlessCoreTests
         Step(150);
 
         Assert.Equal(expected, host.LastFrame.ComputeHash());
+    }
+
+    [RequiresCoreFact("fbneo", "gridlee")]
+    public void Rewinding_returns_to_earlier_frames_exactly()
+    {
+        long clock = 0;
+        var input = new ScriptedInput(() => clock)
+            .Press(60, JoypadButton.Select)
+            .Press(120, JoypadButton.Start)
+            .Press(180, JoypadButton.Left, 60)
+            .Press(260, JoypadButton.Right, 60);
+        using var host = LoadCore("fbneo", "gridlee", input);
+        var rewind = new RewindBuffer(16 << 20, 1000);
+        var states = new List<byte[]>();
+        var frames = new List<ulong>();
+        var buffer = new byte[host.StateSize];
+        for (; clock < 360; clock++)
+        {
+            host.RunFrame();
+            Assert.True(host.TrySaveState(buffer));
+            rewind.Push(buffer);
+            states.Add(buffer.ToArray());
+            frames.Add(host.LastFrame.ComputeHash());
+        }
+
+        // Each compressed step is a small fraction of a whole state.
+        var perStep = rewind.BytesUsed / (double)rewind.Count;
+        output.WriteLine($"State {buffer.Length} bytes, {perStep:F0} bytes per rewind step ({perStep * 3600 / 1e6:F1} MB per minute at 60 fps)");
+        Assert.True(perStep < buffer.Length / 4.0, $"{perStep:F0} bytes per step for a {buffer.Length}-byte state");
+
+        // Step back 150 frames (as the game scene does: restore, then run one frame to show it).
+        for (var i = 0; i < 150; i++)
+        {
+            Assert.True(rewind.TryStepBack(out var state));
+            Assert.Equal(states[^(i + 2)], state.ToArray());
+            host.LoadState(state);
+            clock = states.Count - (i + 2) + 1;
+            host.RunFrame();
+            Assert.Equal(frames[^(i + 1)], host.LastFrame.ComputeHash());
+        }
+
+        // Playing on from there with the same input gives the same game as before.
+        for (clock++; clock < 360; clock++)
+            host.RunFrame();
+        Assert.Equal(frames[^1], host.LastFrame.ComputeHash());
+    }
+
+    [RequiresCoreFact("fbneo", "gridlee")]
+    public void FBNeo_lists_a_games_cheats_as_options()
+    {
+        var cheats = Path.Combine(Path.GetTempPath(), "arcade-tests", "system", "fbneo", "cheats");
+        Directory.CreateDirectory(cheats);
+        var file = Path.Combine(cheats, "gridlee.ini");
+        File.WriteAllText(file, """
+            cheat "Test Poke"
+            default 0
+            0 "Disabled"
+            1 "Enabled", 0, 0x0010, 0x00
+            """);
+        try
+        {
+            using var host = LoadCore("fbneo", "gridlee");
+            var cheat = Assert.Single(host.Options.Values, o => o.Key.StartsWith("fbneo-cheat-"));
+            Assert.Contains("Test Poke", cheat.Description);
+            Assert.Equal(["0 - Disabled", "1 - Enabled"], cheat.Values);
+            host.SetOption(cheat.Key, "1 - Enabled");
+            Run(host, 60);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
     }
 
     [RequiresCoreFact("fbneo", "gridlee")]

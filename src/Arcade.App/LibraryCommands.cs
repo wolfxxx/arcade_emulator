@@ -106,7 +106,7 @@ sealed class LibraryCommands(AppPaths paths)
         Console.WriteLine($"  Core:     {game.CoreId ?? "none"}{(game.CoreOverride != null ? $" (set by you: {game.CoreOverride})" : " (automatic)")}");
         foreach (var w in game.Warnings)
             Console.WriteLine($"  Note:     {w}");
-        Console.WriteLine($"  Played:   {game.PlayCount} time(s){(game.LastPlayed is { } t ? $", last {t.ToLocalTime():g}" : "")}");
+        Console.WriteLine($"  Played:   {game.PlayCount} time(s), {Browser.BrowserScene.Duration(game.PlayTime)}{(game.LastPlayed is { } t ? $", last {t.ToLocalTime():g}" : "")}");
 
         if (File.Exists(game.Path))
         {

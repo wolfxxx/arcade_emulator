@@ -16,6 +16,15 @@ sealed class Settings
     public int AttractMinutes { get; set; } = 3;
     /// <summary>Seconds each game plays in attract mode.</summary>
     public int AttractSecondsPerGame { get; set; } = 45;
+    // ---- Gameplay ----
+
+    /// <summary>Seconds of play kept for rewinding; 0 turns rewind off.</summary>
+    public int RewindSeconds { get; set; } = 60;
+    /// <summary>How many times normal speed fast-forward runs at.</summary>
+    public double FastForwardSpeed { get; set; } = 3;
+    /// <summary>Speed of slow motion, as a fraction of normal.</summary>
+    public double SlowMotionSpeed { get; set; } = 0.5;
+
     // ---- Cabinet ----
 
     /// <summary>Quarter turns clockwise to turn the whole picture (menus too), for a monitor mounted on its side.</summary>

@@ -14,6 +14,12 @@ enum ArcadeControl
 enum Hotkey
 {
     Menu, SaveState, LoadState, Reset, Screenshot, ExitGame,
+    /// <summary>Held: the game runs backwards.</summary>
+    Rewind,
+    /// <summary>Held: the game runs faster.</summary>
+    FastForward,
+    /// <summary>Pressed: slow motion on or off.</summary>
+    SlowMotion,
 }
 
 static class ArcadeControls
@@ -70,6 +76,9 @@ static class ArcadeControls
         Hotkey.Reset => "Reset game",
         Hotkey.Screenshot => "Screenshot",
         Hotkey.ExitGame => "Back to game list",
+        Hotkey.Rewind => "Rewind (hold)",
+        Hotkey.FastForward => "Fast-forward (hold)",
+        Hotkey.SlowMotion => "Slow motion on/off",
         _ => hotkey.ToString(),
     };
 

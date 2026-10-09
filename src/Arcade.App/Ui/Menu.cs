@@ -103,7 +103,10 @@ sealed class Menu(string title, IReadOnlyList<MenuItem> items)
         var bodyFont = theme.Body(r, 28);
         var bodyLines = Body == null ? [] : UiRenderer.Wrap(bodyFont, Body, listW - r.S(96));
         var bodyH = bodyLines.Count * bodyFont.LineHeight * 1.15f + (bodyLines.Count > 0 ? r.S(24) : 0);
-        var height = r.S(150) + bodyH + rowH * items.Count + r.S(70);
+        // Long menus (e.g. a game's cheats) scroll to keep the selection in view.
+        var rowsShown = Math.Clamp((int)((r.Height - r.S(300) - bodyH) / rowH), 3, items.Count);
+        var first = Math.Clamp(_selected - rowsShown / 2, 0, items.Count - rowsShown);
+        var height = r.S(150) + bodyH + rowH * rowsShown + r.S(70);
         var panel = new RectF((r.Width - width) / 2, (r.Height - height) / 2 + r.S(20) * (1 - appear), width, height);
         var radius = theme.Radius(r) * 1.5f;
 
@@ -124,19 +127,19 @@ sealed class Menu(string title, IReadOnlyList<MenuItem> items)
             by += bodyFont.LineHeight * 1.15f;
         }
         var top = panel.Y + r.S(140) + bodyH;
-        var targetY = top + _selected * rowH;
+        var targetY = top + (_selected - first) * rowH;
         _highlightY = _highlightY < 0 ? targetY : Easing.Approach(_highlightY, targetY, 30, dt);
         var rowRect = new RectF(panel.X + r.S(24), _highlightY, listW - r.S(48), rowH - r.S(6));
         r.Fill(rowRect, theme.Selection.WithAlpha(0.9f * appear), r.S(10));
 
-        for (var i = 0; i < items.Count; i++)
+        for (var i = first; i < first + rowsShown; i++)
         {
             var item = items[i];
-            var y = top + i * rowH;
+            var y = top + (i - first) * rowH;
             var selected = i == _selected;
             var color = !item.Enabled ? theme.TextDim.WithAlpha(0.5f) : selected ? theme.SelectionText : theme.Text;
             var textY = y + (rowH - r.S(6) - itemFont.LineHeight) / 2;
-            r.Text(itemFont, item.Label, x, textY, color.WithAlpha(appear));
+            r.Text(itemFont, item.Label, x, textY, color.WithAlpha(appear), item.Choices != null ? listW * 0.56f : listW - r.S(96));
             if (item.Choices != null)
             {
                 var value = item.Choices[item.Choice];
@@ -144,6 +147,10 @@ sealed class Menu(string title, IReadOnlyList<MenuItem> items)
                 r.TextRight(itemFont, selected ? $"‹  {value}  ›" : value, right, textY, (selected ? theme.SelectionText : theme.Accent2).WithAlpha(appear));
             }
         }
+        if (first > 0)
+            r.TextRight(smallFont, "▲", panel.X + listW - r.S(30), top - r.S(30), theme.TextDim.WithAlpha(appear));
+        if (first + rowsShown < items.Count)
+            r.TextRight(smallFont, "▼", panel.X + listW - r.S(30), top + rowsShown * rowH - r.S(4), theme.TextDim.WithAlpha(appear));
 
         if (items[_selected].Hint is { } hint)
             r.Text(smallFont, hint, x, panel.Bottom - r.S(56), theme.TextDim.WithAlpha(appear), listW - r.S(96));

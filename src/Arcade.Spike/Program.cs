@@ -1,14 +1,14 @@
 // Phase 0 spike: load a libretro core headlessly, run a ROM for N frames, dump the last frame to PNG,
 // and check that save states round-trip deterministically.
 //
-// Usage: Arcade.Spike <core.dll> <rom.zip> [--frames 600] [--out out/frame.png] [--play] [--audio-meter] [--verbose]
+// Usage: Arcade.Spike <core.dll> <rom.zip> [--frames 600] [--out out/frame.png] [--play] [--audio-meter] [--options] [--verbose]
 
 using System.Diagnostics;
 using Arcade.Libretro;
 
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("Usage: Arcade.Spike <core.dll> <rom.zip> [--frames N] [--out file.png] [--play] [--audio-meter] [--verbose]");
+    Console.Error.WriteLine("Usage: Arcade.Spike <core.dll> <rom.zip> [--frames N] [--out file.png] [--play] [--audio-meter] [--options] [--verbose]");
     return 2;
 }
 
@@ -19,6 +19,7 @@ var outPath = Path.Combine("out", Path.GetFileNameWithoutExtension(romPath) + ".
 var play = false;
 var verbose = false;
 var audioMeter = false;
+var listOptions = false;
 for (var i = 2; i < args.Length; i++)
 {
     switch (args[i])
@@ -28,6 +29,7 @@ for (var i = 2; i < args.Length; i++)
         case "--play": play = true; break;
         case "--verbose": verbose = true; break;
         case "--audio-meter": audioMeter = true; break;
+        case "--options": listOptions = true; break;
         default: Console.Error.WriteLine($"Unknown argument {args[i]}"); return 2;
     }
 }
@@ -63,6 +65,9 @@ try
     Console.WriteLine($"Video:     {av.Geometry.BaseWidth}x{av.Geometry.BaseHeight} (max {av.Geometry.MaxWidth}x{av.Geometry.MaxHeight}), aspect {av.Geometry.AspectRatio:F3}, rotation {host.Rotation * 90}°");
     Console.WriteLine($"Timing:    {av.Timing.Fps:F4} fps, audio {av.Timing.SampleRate:F0} Hz");
     Console.WriteLine($"Options:   {host.Options.Count} declared");
+    if (listOptions)
+        foreach (var option in host.Options.Values)
+            Console.WriteLine($"  {option.Key} = {option.Value}  [{string.Join(" | ", option.Values)}]");
 
     var sw = Stopwatch.StartNew();
     for (var f = 0; f < frames; f++)
@@ -89,7 +94,9 @@ try
     // Determinism check: save, run 60 frames, load, run the same 60 frames, compare.
     try
     {
+        var timer = Stopwatch.StartNew();
         var state = host.SaveState();
+        var saveMs = timer.Elapsed.TotalMilliseconds;
         for (var f = 0; f < 60; f++) host.RunFrame();
         var first = host.LastFrame.ComputeHash();
         host.LoadState(state);
@@ -97,7 +104,7 @@ try
         var second = host.LastFrame.ComputeHash();
         if (first == second)
         {
-            Console.WriteLine($"SaveState: {state.Length} bytes, round-trip deterministic");
+            Console.WriteLine($"SaveState: {state.Length} bytes in {saveMs:F2} ms, round-trip deterministic");
         }
         else
         {
